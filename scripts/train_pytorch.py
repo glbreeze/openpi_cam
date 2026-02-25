@@ -625,6 +625,7 @@ def train_loop(config: _config.TrainConfig):
 def main():
     init_logging()
     config = _config.cli()
+    import pdb; pdb.set_trace()
     train_loop(config)
 
 
