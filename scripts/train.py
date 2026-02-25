@@ -216,7 +216,7 @@ def main(config: _config.TrainConfig):
         resume=config.resume,
     )
     init_wandb(config, resuming=resuming, enabled=config.wandb_enabled)
-
+    import pdb; pdb.set_trace()
     data_loader = _data_loader.create_data_loader(
         config,
         sharding=data_sharding,

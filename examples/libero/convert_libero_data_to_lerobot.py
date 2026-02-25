@@ -25,13 +25,23 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 import tensorflow_datasets as tfds
 import tyro
 
-REPO_NAME = "your_hf_username/libero"  # Name of the output dataset, also used for the Hugging Face Hub
+REPO_NAME = "glbreeze/libero_cam"  # Name of the output dataset, also used for the Hugging Face Hub
+
 RAW_DATASET_NAMES = [
-    "libero_10_no_noops",
-    "libero_goal_no_noops",
-    "libero_object_no_noops",
-    "libero_spatial_no_noops",
+    "libero_10",
+    "libero_goal",
+    "libero_object",
+    "libero_spatial",
 ]  # For simplicity we will combine multiple Libero datasets into one training dataset
+
+# RAW_DATASET_NAMES = [
+#     "libero_10_no_noops",
+#     "libero_goal_no_noops",
+#     "libero_object_no_noops",
+#     "libero_spatial_no_noops",
+# ]  # For simplicity we will combine multiple Libero datasets into one training dataset
+
+# RAW_DATASET_NAMES = ["libero_plus"]
 
 
 def main(data_dir: str, *, push_to_hub: bool = False):
@@ -68,6 +78,16 @@ def main(data_dir: str, *, push_to_hub: bool = False):
                 "shape": (7,),
                 "names": ["actions"],
             },
+            "agent_extrinsic": {
+                "dtype": "float32",
+                "shape": (4, 4),
+                "names": ["row", "col"],
+            },
+            "wrist_extrinsic": {
+                "dtype": "float32",
+                "shape": (4, 4),
+                "names": ["row", "col"],
+            },
         },
         image_writer_threads=10,
         image_writer_processes=5,
@@ -85,6 +105,8 @@ def main(data_dir: str, *, push_to_hub: bool = False):
                         "wrist_image": step["observation"]["wrist_image"],
                         "state": step["observation"]["state"],
                         "actions": step["action"],
+                        "agent_extrinsic": step["observation"]["agent_extrinsic"],
+                        "wrist_extrinsic": step["observation"]["wrist_extrinsic"],
                         "task": step["language_instruction"].decode(),
                     }
                 )
