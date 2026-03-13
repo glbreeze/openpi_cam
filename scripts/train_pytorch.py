@@ -335,6 +335,7 @@ def train_loop(config: _config.TrainConfig):
     # Create checkpoint directory with experiment name
     if not resuming:
         # For new runs, create experiment-specific checkpoint directory
+        # Default out checkpoint folder: "./checkpoints" / self.name / self.exp_name
         exp_checkpoint_dir = config.checkpoint_dir
         exp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
         logging.info(f"Created experiment checkpoint directory: {exp_checkpoint_dir}")
@@ -625,7 +626,6 @@ def train_loop(config: _config.TrainConfig):
 def main():
     init_logging()
     config = _config.cli()
-    import pdb; pdb.set_trace()
     train_loop(config)
 
 

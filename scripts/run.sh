@@ -11,12 +11,18 @@ source /home/asus/Research/openpi/.venv/bin/activate
 
 # Convert data to a LeRobot dataset 
 export HF_HOME=/home/asus/Research/datasets/huggingface
-nohup python examples/libero/convert_libero_data_to_lerobot.py --data_dir /home/asus/Research/datasets/libero_cam_rlds > libero_to_lerobot.out 2>&1 &
+nohup python examples/libero/convert_libero_data_to_lerobot.py --data_dir /home/asus/Research/datasets/libero_cam_rlds \
+  --repo-name glbreeze/libero_cam > libero_to_lerobot_cam.out 2>&1 &
+
+nohup python examples/libero/convert_libero_data_to_lerobot.py --data_dir /home/asus/Research/datasets/modified_libero_rlds \
+  --repo-name glbreeze/libero > libero_to_lerobot_base.out 2>&1 &
 # modified_libero_rlds | libero_mix | libero_cam_rlds
 
 # Compute the normalization statistics for the training data
 # go to "src/openpi/training/config.py" and change repo_id to repo_id='glbreeze/libero_cam'
-nohup python scripts/compute_norm_stats.py --config-name pi0_libero > compute_stats.out 2>&1 &
+nohup python scripts/compute_norm_stats.py --config-name pi0_libero_cam > compute_stats.out 2>&1 &
+
+nohup python scripts/compute_norm_stats.py --config-name pi0_libero > compute_stats_base.out 2>&1 &
 
 # convert JAX model ckpt to PyTorch format
 uv run examples/convert_jax_model_to_pytorch.py \
@@ -26,6 +32,13 @@ uv run examples/convert_jax_model_to_pytorch.py \
 
 
 # Single GPU training:
+python scripts/train_pytorch.py pi0_libero --exp_name test_run \
+  --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base --batch_size 16 \
+  --data.repo_id glbreeze/libero
+
+  
+
+
 python scripts/train_pytorch.py pi0_libero --exp_name test_run \
   --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base --batch_size 16 \
   --data.repo_id glbreeze/libero_cam
