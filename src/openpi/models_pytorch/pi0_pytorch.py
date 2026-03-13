@@ -193,13 +193,13 @@ class PI0Pytorch(nn.Module):
         pad_masks = []
         att_masks = []
 
-        # Process images
+        # -------------- Process images (vision_tower + multi_modal_projector) --------------
         for img, img_mask in zip(images, img_masks, strict=True):
 
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
 
-            img_emb = self._apply_checkpoint(image_embed_func, img)
+            img_emb = self._apply_checkpoint(image_embed_func, img) # [32, 256, 2048] here just img for one cam
 
             bsize, num_img_embs = img_emb.shape[:2]
 
@@ -208,8 +208,8 @@ class PI0Pytorch(nn.Module):
 
             # Create attention masks so that image tokens attend to each other
             att_masks += [0] * num_img_embs
-
-        # Process language tokens
+            
+        # -------------- Process language tokens --------------
         def lang_embed_func(lang_tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
             lang_emb_dim = lang_emb.shape[-1]
@@ -219,16 +219,16 @@ class PI0Pytorch(nn.Module):
 
         embs.append(lang_emb)
         pad_masks.append(lang_masks)
-
+        
         # full attention between image and language inputs
         num_lang_embs = lang_emb.shape[1]
         att_masks += [0] * num_lang_embs
 
+        # -------------- concat img language tokens --------------
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
 
-        # Get batch size from the first dimension of the concatenated tensors
         bsize = pad_masks.shape[0]
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
@@ -240,11 +240,11 @@ class PI0Pytorch(nn.Module):
         pad_masks = []
         att_masks = []
 
+        # ----------------------- Embed state  ----------------------- 
         if not self.pi05:
             if self.state_proj.weight.dtype == torch.float32:
                 state = state.to(torch.float32)
 
-            # Embed state
             def state_proj_func(state):
                 return self.state_proj(state)
 
@@ -260,18 +260,20 @@ class PI0Pytorch(nn.Module):
             # Set attention masks so that image and language inputs do not attend to state or actions
             att_masks += [1]
 
+        # ----------------------- Embed time  ----------------------- 
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = create_sinusoidal_pos_embedding(
             timestep, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0, device=timestep.device
         )
         time_emb = time_emb.type(dtype=timestep.dtype)
 
-        # Fuse timestep + action information using an MLP
+        # ----------------------- Embed action  ----------------------- 
         def action_proj_func(noisy_actions):
             return self.action_in_proj(noisy_actions)
 
         action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
 
+        # -------------- Fuse timestep + action information using an MLP  -------------- 
         if not self.pi05:
             time_emb = time_emb[:, None, :].expand_as(action_emb)
             action_time_emb = torch.cat([action_emb, time_emb], dim=2)
@@ -306,6 +308,7 @@ class PI0Pytorch(nn.Module):
         # Set attention masks so that image, language and state inputs do not attend to action tokens
         att_masks += [1] + ([0] * (self.config.action_horizon - 1))
 
+        # ---------------------- concat state_emb + time_action_emb ----------------------
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
         att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
@@ -314,9 +317,13 @@ class PI0Pytorch(nn.Module):
         return embs, pad_masks, att_masks, adarms_cond
 
     def forward(self, observation, actions, noise=None, time=None) -> Tensor:
+        # observation: images{'base_0_rgb', 'left_wrist_0_rgb', 'right_wrist_0_rgb'}, image_masks
+        # state [b, 32]  tokenized_prompt,tokenized_prompt_mask [32, 48], 
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=True)
+        # images, img_masks: -> lists 
 
+        # ----------------- get noisy actions  ----------------- 
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
@@ -327,7 +334,10 @@ class PI0Pytorch(nn.Module):
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
+        # ----------------- embed img + language  ----------------- 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
+        
+        # ----------------- embed state + time_action  ----------------- 
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, time)
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
