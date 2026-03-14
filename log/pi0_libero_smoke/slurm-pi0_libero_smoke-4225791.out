@@ -1,0 +1,17 @@
+transformers overlay ready at /scratch/yp2841/TFP/geo/openpi_cam/.venv/lib/python3.11/site-packages/transformers
+===== SMOKE TEST ENV CHECK =====
+repo root: /scratch/yp2841/TFP/geo/openpi_cam
+config: pi0_libero_local_pytorch_full_finetune
+exp: pi0_libero_smoke_4225791
+dataset: /scratch/yp2841/TFP/geo/glbreeze/libero
+base model: /scratch/yp2841/TFP/geo/pi0_base
+norm stats: /scratch/yp2841/TFP/geo/pi0_libero/glbreeze/libero
+checkpoints: /scratch/yp2841/TFP/geo/openpi_cam/checkpoints
+wandb root: /state/partition1/job-4225791/openpi_cam_smoke_4225791/wandb_root
+num_gpus: 1
+batch_size: 2
+num_train_steps: 2
+/scratch/yp2841/TFP/geo/openpi_cam/.venv/bin/python
+Python 3.11.14
+gh001.hpc.nyu.edu
+GPU 0: NVIDIA H100 80GB HBM3 (UUID: GPU-9e92bc73-1af4-12e1-0ea3-9e3ca9920a3e)

@@ -79,14 +79,21 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, enabled: bool = T
     if not ckpt_dir.exists():
         raise FileNotFoundError(f"Checkpoint directory {ckpt_dir} does not exist.")
 
+    wandb_root_dir = os.environ.get("WANDB_DIR")
+    wandb_kwargs = {"project": config.project_name}
+    if wandb_root_dir:
+        logging.info(f"Initializing wandb with root dir: {wandb_root_dir}")
+        wandb_kwargs["dir"] = wandb_root_dir
+        wandb_kwargs["settings"] = wandb.Settings(root_dir=wandb_root_dir)
+
     if resuming:
         run_id = (ckpt_dir / "wandb_id.txt").read_text().strip()
-        wandb.init(id=run_id, resume="must", project=config.project_name)
+        wandb.init(id=run_id, resume="must", **wandb_kwargs)
     else:
         wandb.init(
             name=config.exp_name,
             config=dataclasses.asdict(config),
-            project=config.project_name,
+            **wandb_kwargs,
         )
         (ckpt_dir / "wandb_id.txt").write_text(wandb.run.id)
 

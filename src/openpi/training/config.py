@@ -701,6 +701,22 @@ _CONFIGS = [
         num_train_steps=30_000,
     ),
     TrainConfig(
+        name="pi0_libero_pytorch_full_finetune",
+        model=pi0_config.Pi0Config(),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero",
+            assets=AssetsConfig(
+                assets_dir="/scratch/yp2841/TFP/geo/pi0_libero",
+                asset_id=f"{HF_NAME}/libero",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=False,
+        ),
+        pytorch_weight_path="/scratch/yp2841/TFP/geo/pi0_base",
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
         name="pi0_libero_low_mem_finetune",
         # Here is an example of loading a pi0 model for LoRA fine-tuning.
         model=pi0_config.Pi0Config(paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"),
