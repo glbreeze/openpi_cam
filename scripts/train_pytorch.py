@@ -135,6 +135,18 @@ def build_datasets(config: _config.TrainConfig):
     return data_loader, data_loader.data_config()
 
 
+def log_preview_images(observation, *, step: int = 0):
+    """Log a small camera-strip preview for the current batch to wandb."""
+    images_to_log = []
+    batch_size = next(iter(observation.images.values())).shape[0]
+    for i in range(min(5, batch_size)):
+        img_concatenated = torch.cat([img[i].permute(1, 2, 0) for img in observation.images.values()], axis=1)
+        img_concatenated = img_concatenated.detach().cpu().numpy()
+        images_to_log.append(wandb.Image(img_concatenated))
+
+    wandb.log({"camera_views": images_to_log}, step=step)
+
+
 def get_model_state_dict(model):
     """Get state dict from model, handling DDP wrapper."""
     return (
@@ -336,23 +348,28 @@ def train_loop(config: _config.TrainConfig):
         else:
             raise FileNotFoundError(f"Experiment checkpoint directory {exp_checkpoint_dir} does not exist for resume")
     elif config.overwrite and config.checkpoint_dir.exists():
-        shutil.rmtree(config.checkpoint_dir)
-        logging.info(f"Overwriting checkpoint directory: {config.checkpoint_dir}")
+        if is_main:
+            shutil.rmtree(config.checkpoint_dir)
+            logging.info(f"Overwriting checkpoint directory: {config.checkpoint_dir}")
 
     # Create checkpoint directory with experiment name
     if not resuming:
         # For new runs, create experiment-specific checkpoint directory
         # Default out checkpoint folder: "./checkpoints" / self.name / self.exp_name
         exp_checkpoint_dir = config.checkpoint_dir
-        exp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        logging.info(f"Created experiment checkpoint directory: {exp_checkpoint_dir}")
+        if is_main:
+            exp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            logging.info(f"Created experiment checkpoint directory: {exp_checkpoint_dir}")
     else:
         # For resume, checkpoint_dir is already set to the experiment directory
-        logging.info(f"Using existing experiment checkpoint directory: {config.checkpoint_dir}")
+        if is_main:
+            logging.info(f"Using existing experiment checkpoint directory: {config.checkpoint_dir}")
 
     # Initialize wandb (only on main process)
     if is_main:
         init_wandb(config, resuming=resuming, enabled=config.wandb_enabled)
+    if use_ddp:
+        dist.barrier()
 
     # Build data loader using the unified data loader
     # Calculate effective batch size per GPU for DDP
@@ -365,37 +382,6 @@ def train_loop(config: _config.TrainConfig):
 
     # Pass the original batch size to data loader - it will handle DDP splitting internally
     loader, data_config = build_datasets(config)
-
-    # Log sample images to wandb on first batch
-    if is_main and config.wandb_enabled and not resuming:
-        # Create a separate data loader for sample batch to avoid consuming the main loader
-        sample_data_loader = _data.create_data_loader(config, framework="pytorch", shuffle=False)
-        sample_batch = next(iter(sample_data_loader))
-        # Convert observation and actions to torch tensors
-        observation, actions = sample_batch
-        sample_batch = observation.to_dict()
-        sample_batch["actions"] = actions
-
-        # Create sample images for wandb
-        images_to_log = []
-        # Get batch size from the first image tensor
-        batch_size = next(iter(sample_batch["image"].values())).shape[0]
-        for i in range(min(5, batch_size)):
-            # Concatenate all camera views horizontally for this batch item
-            # Convert from NCHW to NHWC format for wandb
-            img_concatenated = torch.cat([img[i].permute(1, 2, 0) for img in sample_batch["image"].values()], axis=1)
-            img_concatenated = img_concatenated.cpu().numpy()
-            images_to_log.append(wandb.Image(img_concatenated))
-
-        wandb.log({"camera_views": images_to_log}, step=0)
-
-        # Clear sample batch from memory aggressively
-        del sample_batch, observation, actions, images_to_log, img_concatenated
-        del sample_data_loader  # Also delete the sample data loader
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        logging.info("Cleared sample batch and data loader from memory")
 
     # Build model
     if not isinstance(config.model, openpi.models.pi0_config.Pi0Config):
@@ -513,6 +499,7 @@ def train_loop(config: _config.TrainConfig):
         if is_main
         else None
     )
+    preview_logged = resuming or (not config.wandb_enabled)
 
     while global_step < config.num_train_steps:
         # Set epoch for distributed training
@@ -528,6 +515,14 @@ def train_loop(config: _config.TrainConfig):
             observation = jax.tree.map(lambda x: x.to(device), observation)  # noqa: PLW2901
             actions = actions.to(torch.float32)  # noqa: PLW2901
             actions = actions.to(device)  # noqa: PLW2901
+
+            if is_main and not preview_logged:
+                log_preview_images(observation, step=global_step)
+                preview_logged = True
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                logging.info("Logged preview images from the first training batch")
 
             # Update LR
             for pg in optim.param_groups:

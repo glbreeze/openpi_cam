@@ -9,7 +9,7 @@
 #SBATCH --time=12:00:00
 #SBATCH --account=torch_pr_637_tandon_advanced
 #SBATCH --partition=h200_tandon
-#SBATCH --gres=gpu:h200:4
+#SBATCH --gres=gpu:h200:8
 #SBATCH --export=ALL
 
 set -euo pipefail
