@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import dataclasses
 import difflib
 import logging
+import os
 import pathlib
 from typing import Any, Literal, Protocol, TypeAlias
 
@@ -34,6 +35,16 @@ ModelType: TypeAlias = _model.ModelType
 Filter: TypeAlias = nnx.filterlib.Filter
 
 HF_NAME="glbreeze"
+
+
+def _get_local_geo_root() -> pathlib.Path:
+    env_root = os.environ.get("OPENPI_GEO_ROOT")
+    if env_root:
+        return pathlib.Path(env_root).expanduser().resolve()
+    return pathlib.Path(__file__).resolve().parents[4]
+
+
+LOCAL_GEO_ROOT = _get_local_geo_root()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -706,14 +717,14 @@ _CONFIGS = [
         data=LeRobotLiberoDataConfig(
             repo_id=f"{HF_NAME}/libero",
             assets=AssetsConfig(
-                assets_dir="/scratch/yp2841/TFP/geo/pi0_libero",
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
                 asset_id=f"{HF_NAME}/libero",
             ),
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
             include_cam_extrinsics=False,
         ),
-        pytorch_weight_path="/scratch/yp2841/TFP/geo/pi0_base",
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
     ),
     TrainConfig(

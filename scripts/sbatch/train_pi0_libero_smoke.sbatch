@@ -1,21 +1,48 @@
 #!/bin/bash
 #SBATCH --job-name=pi0_libero_smoke
-#SBATCH --output=/scratch/yp2841/TFP/geo/openpi_cam/log/pi0_libero_smoke/slurm-%j.out
-#SBATCH --error=/scratch/yp2841/TFP/geo/openpi_cam/log/pi0_libero_smoke/slurm-%j.err
+#SBATCH --output=/scratch/yp2841/geometry-vla/openpi_cam/log/pi0_libero_smoke/slurm-%j.out
+#SBATCH --error=/scratch/yp2841/geometry-vla/openpi_cam/log/pi0_libero_smoke/slurm-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --time=01:00:00
-#SBATCH --account=torch_pr_637_tandon_advanced
-#SBATCH --partition=h100_tandon
-#SBATCH --gres=gpu:h100:1
+#SBATCH --account=torch_pr_637_general
+#SBATCH --partition=l40s_public
+#SBATCH --gres=gpu:l40s:1
 #SBATCH --export=ALL
 
 set -euo pipefail
 
-REPO_ROOT=/scratch/yp2841/TFP/geo/openpi_cam
-GEO_ROOT=/scratch/yp2841/TFP/geo
+resolve_repo_root() {
+  local candidate
+  local script_root=""
+
+  if script_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd); then
+    :
+  else
+    script_root=""
+  fi
+
+  for candidate in "${REPO_ROOT:-}" "${OPENPI_CAM_ROOT:-}" "${SLURM_SUBMIT_DIR:-}" "${script_root}"; do
+    [[ -n "${candidate}" ]] || continue
+    while [[ "${candidate}" != "/" ]]; do
+      if [[ -f "${candidate}/scripts/env/activate_env.sh" ]]; then
+        printf '%s\n' "${candidate}"
+        return 0
+      fi
+      candidate=$(dirname -- "${candidate}")
+    done
+  done
+
+  return 1
+}
+
+REPO_ROOT=${REPO_ROOT:-$(resolve_repo_root)} || {
+  echo "Unable to locate repo root. Set REPO_ROOT or submit from inside the repo." >&2
+  exit 1
+}
+GEO_ROOT=${GEO_ROOT:-$(cd -- "${REPO_ROOT}/.." && pwd)}
 
 CONFIG_NAME=${CONFIG_NAME:-pi0_libero_pytorch_full_finetune}
 EXP_NAME=${EXP_NAME:-pi0_libero_smoke_${SLURM_JOB_ID:-manual}}

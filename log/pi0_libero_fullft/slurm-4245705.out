@@ -1,0 +1,16 @@
+===== ENV CHECK =====
+repo root: /scratch/yp2841/geometry-vla/openpi_cam
+config: pi0_libero_pytorch_full_finetune
+exp: pi0_libero_fullft_4245705
+dataset: /scratch/yp2841/geometry-vla/glbreeze/libero
+base model: /scratch/yp2841/geometry-vla/pi0_base
+norm stats: /scratch/yp2841/geometry-vla/pi0_libero/glbreeze/libero
+checkpoints: /scratch/yp2841/geometry-vla/openpi_cam/checkpoints
+wandb root: /state/partition1/job-4245705/openpi_cam_4245705/wandb_root
+/scratch/yp2841/geometry-vla/openpi_cam/.venv/bin/python
+Python 3.11.14
+gh111.hpc.nyu.edu
+GPU 0: NVIDIA H200 (UUID: GPU-2fa5d7de-730c-a4eb-5701-5ac601ffa52c)
+GPU 1: NVIDIA H200 (UUID: GPU-5397c26f-8156-2fad-3ee8-6b291d031bdb)
+GPU 2: NVIDIA H200 (UUID: GPU-7dc039a8-ce0e-38b6-7d7b-a6c540f88cc6)
+GPU 3: NVIDIA H200 (UUID: GPU-d181ec55-44bf-9eaa-f60d-4cc1ffad08ea)
