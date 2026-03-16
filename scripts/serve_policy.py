@@ -48,6 +48,10 @@ class Args:
 
     # Port to serve the policy on.
     port: int = 8000
+    # Maximum number of requests to batch into one forward pass.
+    batch_max_size: int = 1
+    # How long to wait for additional requests before executing a batch.
+    batch_timeout_ms: float = 0.0
     # Record the policy's behavior for debugging.
     record: bool = False
 
@@ -113,6 +117,8 @@ def main(args: Args) -> None:
         host="0.0.0.0",
         port=args.port,
         metadata=policy_metadata,
+        batch_max_size=args.batch_max_size,
+        batch_timeout_ms=args.batch_timeout_ms,
     )
     server.serve_forever()
 

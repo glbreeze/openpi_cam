@@ -36,6 +36,8 @@ class Args:
     )
     num_steps_wait: int = 10  # Number of steps to wait for objects to stabilize i n sim
     num_trials_per_task: int = 50  # Number of rollouts per task
+    task_id_start: int = 0  # Inclusive task index to start from
+    task_id_end: int = -1  # Exclusive task index to stop at; -1 means run through the end
 
     #################################################################################################################
     # Utils
@@ -72,9 +74,17 @@ def eval_libero(args: Args) -> None:
 
     client = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
 
+    task_id_start = max(0, args.task_id_start)
+    task_id_end = num_tasks_in_suite if args.task_id_end < 0 else min(args.task_id_end, num_tasks_in_suite)
+    if task_id_start >= task_id_end:
+        raise ValueError(
+            f"Invalid task range [{task_id_start}, {task_id_end}) for suite with {num_tasks_in_suite} tasks"
+        )
+    logging.info(f"Task range: [{task_id_start}, {task_id_end}) out of {num_tasks_in_suite}")
+
     # Start evaluation
     total_episodes, total_successes = 0, 0
-    for task_id in tqdm.tqdm(range(num_tasks_in_suite)):
+    for task_id in tqdm.tqdm(range(task_id_start, task_id_end)):
         # Get task
         task = task_suite.get_task(task_id)
 
@@ -189,7 +199,7 @@ def eval_libero(args: Args) -> None:
 def _get_libero_env(task, resolution, seed):
     """Initializes and returns the LIBERO environment, along with the task description."""
     task_description = task.language
-    task_bddl_file = pathlib.Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file
+    task_bddl_file = str(pathlib.Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file)
     env_args = {"bddl_file_name": task_bddl_file, "camera_heights": resolution, "camera_widths": resolution}
     env = OffScreenRenderEnv(**env_args)
     env.seed(seed)  # IMPORTANT: seed seems to affect object positions even when using fixed initial state
