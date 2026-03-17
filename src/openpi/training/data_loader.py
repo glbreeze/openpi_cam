@@ -138,8 +138,31 @@ def create_torch_dataset(
         return FakeDataset(model_config, num_samples=1024)
 
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
+
+    episodes = None
+    if data_config.task_indices:
+        missing_task_indices = sorted(set(data_config.task_indices) - set(dataset_meta.tasks))
+        if missing_task_indices:
+            raise ValueError(f"task_indices not found in dataset metadata: {missing_task_indices}")
+
+        allowed_tasks = {dataset_meta.tasks[int(task_index)] for task_index in data_config.task_indices}
+        episodes = [
+            episode_index
+            for episode_index, episode in dataset_meta.episodes.items()
+            if any(task in allowed_tasks for task in episode.get("tasks", []))
+        ]
+        if not episodes:
+            raise ValueError(f"No episodes matched task_indices={tuple(data_config.task_indices)} for {repo_id}")
+        logging.info(
+            "Filtering %s to task_indices=%s (%s episodes)",
+            repo_id,
+            tuple(data_config.task_indices),
+            len(episodes),
+        )
+
     dataset = lerobot_dataset.LeRobotDataset(
         data_config.repo_id,
+        episodes=episodes,
         delta_timestamps={
             key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
         },

@@ -103,6 +103,9 @@ class DataConfig:
     # If true, will use the LeRobot dataset task to define the prompt.
     prompt_from_task: bool = False
 
+    # Optional subset of LeRobot task indices to include during training.
+    task_indices: Sequence[int] = ()
+
     # Only used for RLDS data loader (ie currently only used for DROID).
     rlds_data_dir: str | None = None
     # Action space for DROID dataset.
@@ -726,6 +729,38 @@ _CONFIGS = [
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi0_libero_spatial_pytorch_10k_delta_off",
+        model=pi0_config.Pi0Config(),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero",
+            ),
+            base_config=DataConfig(prompt_from_task=True, task_indices=tuple(range(10))),
+            extra_delta_transform=False,
+            include_cam_extrinsics=False,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=10_000,
+    ),
+    TrainConfig(
+        name="pi0_libero_spatial_pytorch_10k_delta_on",
+        model=pi0_config.Pi0Config(),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero",
+            ),
+            base_config=DataConfig(prompt_from_task=True, task_indices=tuple(range(10))),
+            extra_delta_transform=True,
+            include_cam_extrinsics=False,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=10_000,
     ),
     TrainConfig(
         name="pi0_libero_low_mem_finetune",
