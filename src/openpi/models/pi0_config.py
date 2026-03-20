@@ -21,6 +21,10 @@ class Pi0Config(_model.BaseModelConfig):
     paligemma_variant: _gemma.Variant = "gemma_2b"
     action_expert_variant: _gemma.Variant = "gemma_300m"
 
+    # ------ NEW CONFIGS ------
+    cross_view_fusion: bool = False
+    pose_enc_type: str = "null"  # "null" | "relative_pose" | "absolute_pose"
+
     # Set the model specific defaults.
     action_dim: int = 32
     action_horizon: int = 50

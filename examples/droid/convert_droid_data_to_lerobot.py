@@ -287,7 +287,7 @@ class RecordedMultiCameraWrapper:
             camera_kwargs.get(cam_type, {})
 
             if f.endswith(".mp4"):
-                Reader = MP4Reader  # noqa: N806
+                Reader = MP4Reader
             else:
                 raise ValueError
 

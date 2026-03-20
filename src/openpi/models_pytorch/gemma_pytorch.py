@@ -9,13 +9,65 @@ from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.gemma import modeling_gemma
 
 
+class CrossViewFusion(nn.Module):
+    def __init__(self, dim, num_heads=8, mlp_ratio=4.0):
+        super().__init__()
+
+        self.norm1 = modeling_gemma.GemmaRMSNorm(dim)
+        self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=num_heads, batch_first=True)
+
+        self.norm2 = modeling_gemma.GemmaRMSNorm(dim)
+
+        hidden_dim = int(dim * mlp_ratio)
+
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, dim),
+        )
+
+    def forward(self, x, mask=None):
+        x_norm, _ = self.norm1(x)
+
+        attn_out, _ = self.attn(x_norm, x_norm, x_norm, key_padding_mask=(mask == 0) if mask is not None else None)
+
+        x = x + attn_out
+        x_norm, _ = self.norm2(x)
+        return x + self.mlp(x_norm)
+
+
+class CamPoseEncoder(nn.Module):
+    def __init__(self, dim: int, hidden_dim: int = 256):
+        super().__init__()
+
+        self.mlp = nn.Sequential(
+            nn.Linear(9, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, dim),
+        )
+
+    def forward(self, pose):
+        # pose: (B, 9) or (B, V, 9)
+
+        if pose.dim() == 3:
+            B, V, D = pose.shape
+            pose = pose.reshape(B * V, D)
+            out = self.mlp(pose)
+            return out.reshape(B, V, -1)
+
+        return self.mlp(pose)
+
+
 class PaliGemmaWithExpertModel(nn.Module):
     def __init__(
         self,
         vlm_config,
         action_expert_config,
+        *,
         use_adarms=None,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
+        cross_view_fusion: bool = False,
+        pose_enc_type: Literal["null", "relative_pose", "absolute_pose"] = "null",
     ):
         if use_adarms is None:
             use_adarms = [False, False]
@@ -58,6 +110,19 @@ class PaliGemmaWithExpertModel(nn.Module):
         self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)  # action expert
         self.gemma_expert.model.embed_tokens = None
 
+        self.use_cross_view_fusion = cross_view_fusion
+        self.pose_enc_type = pose_enc_type
+        self.num_views = 3  # Pi-0: agent + wrist + wrist2
+
+        if cross_view_fusion:
+            self.cross_view_fusion = CrossViewFusion(dim=vlm_config_hf.vision_config.hidden_size)
+            self.view_embedding = nn.Embedding(
+                num_embeddings=self.num_views,
+                embedding_dim=vlm_config_hf.vision_config.hidden_size,  # must match token dim D
+            )
+        if pose_enc_type != "null":
+            self.cam_pose_encoder = CamPoseEncoder(vlm_config_hf.vision_config.hidden_size)
+
         self.to_bfloat16_for_selected_params(precision)
 
     def to_bfloat16_for_selected_params(self, precision: Literal["bfloat16", "float32"] = "bfloat16"):
@@ -82,8 +147,85 @@ class PaliGemmaWithExpertModel(nn.Module):
             if any(selector in name for selector in params_to_keep_float32):
                 param.data = param.data.to(dtype=torch.float32)
 
-    def embed_image(self, image: torch.Tensor):
-        return self.paligemma.model.get_image_features(image)
+    def embed_image(
+        self,
+        images: torch.Tensor,
+        img_masks: torch.Tensor,
+        cam_pos: dict | None = None,
+        cam_keys: list | None = None,
+    ):
+        B, V, C, H, W = images.shape
+
+        vision_tower = self.paligemma.model.vision_tower
+        projector = self.paligemma.model.multi_modal_projector
+
+        images = images.view(B * V, C, H, W)
+        tokens = vision_tower(images).last_hidden_state  # [B*V, P, D]
+        P, D = tokens.shape[1], tokens.shape[2]
+        tokens = tokens.reshape(B, V, P, D)
+
+        # -------- helpers --------
+        def encode_pose(pose):
+            R = pose[..., :3, :3]
+            t = pose[..., :3, 3]
+            rot6d = R[..., :, :2].reshape(pose.shape[0], -1)  # (B,6)
+            return torch.cat([t, rot6d], dim=-1).to(device=tokens.device, dtype=tokens.dtype)  # (B,9)
+
+        def make_null_token() -> torch.Tensor:
+            return torch.zeros(B, 1, D, device=tokens.device, dtype=tokens.dtype)
+
+        def compute_rel_pose(agent_T, wrist_T):
+            return torch.linalg.inv(agent_T) @ wrist_T  # (B,4,4)
+
+        # --------- camera token injection ---------
+        if self.pose_enc_type != "null":
+            cam_tokens = []
+
+            if self.pose_enc_type == "relative_pose":
+                agent_T = cam_pos["base"]  # (B,4,4)
+
+                for cam_key in cam_keys:
+                    if cam_key == "base" or cam_pos.get(cam_key) is None:
+                        cam_tokens.append(make_null_token())
+                    elif cam_pos.get(cam_key) is not None:
+                        wrist_T = compute_rel_pose(agent_T, cam_pos[cam_key])  # (B,4,4)
+                        cam_token = self.cam_pose_encoder(encode_pose(wrist_T)).unsqueeze(1)
+                        cam_tokens.append(cam_token)
+
+            elif self.pose_enc_type == "absolute_pose":
+                for cam_key in cam_keys:
+                    if cam_pos[cam_key] is not None:
+                        cam_token = self.cam_pose_encoder(encode_pose(cam_pos[cam_key])).unsqueeze(1)
+                        cam_tokens.append(cam_token)
+                    else:
+                        cam_tokens.append(make_null_token())
+            cam_tokens = torch.cat(cam_tokens, dim=1)
+            cam_tokens = cam_tokens.unsqueeze(2)  # (B,V,1,D)
+            tokens = torch.cat([cam_tokens, tokens], dim=2)  # [B, V, P+1, D]
+            P = P + 1
+
+            # ------ update the image masks ------
+            masks = img_masks[:, :, None].expand(B, V, P)
+
+            # -------- add view embedding --------
+            view_ids = torch.arange(V, device=cam_token.device)
+            view_embed = self.view_embedding(view_ids)  # (V,D)
+            tokens = tokens + view_embed[None, :, None, :]  # [B, V, 257, 1152]
+
+        # -------- cross-view fusion --------
+        if self.use_cross_view_fusion:
+            tokens = tokens.reshape(B, V * P, D)
+
+            img_masks = masks.reshape(B, V * P)
+
+            tokens = self.cross_view_fusion(tokens, mask=img_masks)
+
+            tokens = tokens.reshape(B, V, P, D)
+
+        # -------- projector --------
+        tokens = tokens.reshape(B * V, P, D)
+        tokens = projector(tokens)
+        return tokens.reshape(B, V * P, -1), masks.reshape(B, V * P)
 
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.language_model.embed_tokens(tokens)
@@ -99,8 +241,7 @@ class PaliGemmaWithExpertModel(nn.Module):
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
-            
-        # --------- case 1: prefix only --------- 
+        # --------- case 1: prefix only ---------
         if inputs_embeds[1] is None:
             prefix_output = self.paligemma.language_model.forward(
                 inputs_embeds=inputs_embeds[0],
@@ -113,7 +254,7 @@ class PaliGemmaWithExpertModel(nn.Module):
             prefix_past_key_values = prefix_output.past_key_values
             prefix_output = prefix_output.last_hidden_state
             suffix_output = None
-        # --------- case 2: suffix only --------- 
+        # --------- case 2: suffix only ---------
         elif inputs_embeds[0] is None:
             suffix_output = self.gemma_expert.model.forward(
                 inputs_embeds=inputs_embeds[1],
@@ -126,7 +267,7 @@ class PaliGemmaWithExpertModel(nn.Module):
             suffix_output = suffix_output.last_hidden_state
             prefix_output = None
             prefix_past_key_values = None
-        # --------- case 3: full joint forward --------- 
+        # --------- case 3: full joint forward ---------
         else:
             models = [self.paligemma.language_model, self.gemma_expert.model]
             num_layers = self.paligemma.config.text_config.num_hidden_layers
@@ -166,9 +307,9 @@ class PaliGemmaWithExpertModel(nn.Module):
                 key_states = []
                 value_states = []
                 gates = []
-                
+
                 # --------------- Step 1: Compute Q/K/V separately for prefix + suffix ---------------
-                for i, hidden_states in enumerate(inputs_embeds): # loop over 0: prefix, 1: suffix
+                for i, hidden_states in enumerate(inputs_embeds):  # loop over 0: prefix, 1: suffix
                     layer = models[i].layers[layer_idx]
                     hidden_states, gate = layer.input_layernorm(hidden_states, cond=adarms_cond[i])  # noqa: PLW2901
                     gates.append(gate)
@@ -188,7 +329,7 @@ class PaliGemmaWithExpertModel(nn.Module):
                 key_states = torch.cat(key_states, dim=2)
                 value_states = torch.cat(value_states, dim=2)
 
-                # ----------------Step 2: Apply Rotary Positional Embedding (RoPE) to Q/K  ---------------- 
+                # ----------------Step 2: Apply Rotary Positional Embedding (RoPE) to Q/K  ----------------
                 dummy_tensor = torch.zeros(
                     query_states.shape[0],
                     query_states.shape[2],
@@ -229,24 +370,24 @@ class PaliGemmaWithExpertModel(nn.Module):
                         att_output = att_output.to(layer.self_attn.o_proj.weight.dtype)
                     out_emb = layer.self_attn.o_proj(att_output[:, start_pos:end_pos])
 
-                    # ---- first residual ---- 
+                    # ---- first residual ----
                     out_emb = modeling_gemma._gated_residual(hidden_states, out_emb, gates[i])  # noqa: SLF001
                     after_first_residual = out_emb.clone()
                     out_emb, gate = layer.post_attention_layernorm(out_emb, cond=adarms_cond[i])
                     # Convert to bfloat16 if the next layer (mlp) uses bfloat16
                     if layer.mlp.up_proj.weight.dtype == torch.bfloat16:
                         out_emb = out_emb.to(dtype=torch.bfloat16)
-                    # ---- FFN MLP block  ---- 
+                    # ---- FFN MLP block  ----
                     out_emb = layer.mlp(out_emb)
-                    # ---- second residual ---- 
+                    # ---- second residual ----
                     out_emb = modeling_gemma._gated_residual(after_first_residual, out_emb, gate)  # noqa: SLF001
-                    
+
                     outputs_embeds.append(out_emb)
                     start_pos = end_pos
 
                 return outputs_embeds
 
-            # ===================== Process all layers with gradient checkpointing if enabled =====================  
+            # ===================== Process all layers with gradient checkpointing if enabled =====================
             for layer_idx in range(num_layers):
                 if use_gradient_checkpointing:
                     inputs_embeds = torch.utils.checkpoint.checkpoint(
@@ -266,7 +407,7 @@ class PaliGemmaWithExpertModel(nn.Module):
 
                 # Old code removed - now using compute_layer_complete function above
 
-            # ===================== final norm layer  ===================== 
+            # ===================== final norm layer  =====================
             # Define final norm computation function for gradient checkpointing
             def compute_final_norms(inputs_embeds, adarms_cond):
                 outputs_embeds = []
@@ -283,7 +424,7 @@ class PaliGemmaWithExpertModel(nn.Module):
             else:
                 outputs_embeds = compute_final_norms(inputs_embeds, adarms_cond)
 
-            # ----------- split output back to prefix/suffix ----------- 
+            # ----------- split output back to prefix/suffix -----------
             prefix_output = outputs_embeds[0]
             suffix_output = outputs_embeds[1]
             prefix_past_key_values = None

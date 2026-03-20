@@ -117,6 +117,8 @@ ignore = [
     "PD008",  # Lots of false positives.
     "ISC001", # Disabling to support ruff format.
     "LOG015", # Use logger.info.
+    "N803",  # allow T_wc args
+    "N806",  # allow R_we, B, etc.
 ]
 unfixable = [
     "B905", # Fix defaults to strict=False, which is not what we want.
