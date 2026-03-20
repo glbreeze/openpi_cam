@@ -444,15 +444,20 @@ def train_loop(config: _config.TrainConfig):
         logging.info(f"Loading weights from: {config.pytorch_weight_path}")
 
         model_path = os.path.join(config.pytorch_weight_path, "model.safetensors")
-        
+
         missing, unexpected = safetensors.torch.load_model(
-            (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model), 
-            model_path, strict=False                # ----- change to non strict load ------
+            (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model),
+            model_path,
+            strict=False,  # ----- change to non strict load ------
         )
-        
+
         logging.info(f"Loaded PyTorch weights from {config.pytorch_weight_path}")
-            
-        allowed_missing = ["cross_view_fusion", "view_embedding", "cam_pose_encoder",]
+
+        allowed_missing = [
+            "cross_view_fusion",
+            "view_embedding",
+            "cam_pose_encoder",
+        ]
         for key in missing:
             if not any(name in key for name in allowed_missing):
                 raise ValueError(f"Unexpected missing key: {key}")

@@ -68,7 +68,7 @@ class LiberoInputs(transforms.DataTransformFn):
                 "right_wrist_0_rgb": np.True_ if self.model_type == _model.ModelType.PI0_FAST else np.False_,
             },
         }
-        
+
         # ---- processing possible camera param ----
         if "observation/agent_extrinsic" in data:
             inputs["agent_extrinsic"] = data["observation/agent_extrinsic"]

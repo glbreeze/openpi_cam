@@ -22,10 +22,10 @@ import shutil
 
 from lerobot.common.datasets.lerobot_dataset import HF_LEROBOT_HOME
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+import numpy as np
+from scipy.spatial.transform import Rotation
 import tensorflow_datasets as tfds
 import tyro
-from scipy.spatial.transform import Rotation as R
-import numpy as np
 
 RAW_DATASET_NAMES = [
     "libero_10_no_noops",
@@ -33,6 +33,7 @@ RAW_DATASET_NAMES = [
     "libero_object_no_noops",
     "libero_spatial_no_noops",
 ]  # For simplicity we will combine multiple Libero datasets into one training dataset
+
 
 def transform_state_action_to_camera(state, action, T_wc):
     """
@@ -52,9 +53,9 @@ def transform_state_action_to_camera(state, action, T_wc):
     p_c = R_cw @ (p_w - T_wc[:3, 3])
 
     # --- transform state orientation ---
-    R_we = R.from_rotvec(state[3:6]).as_matrix()
+    R_we = Rotation.from_rotvec(state[3:6]).as_matrix()
     R_ce = R_cw @ R_we
-    rotvec_c = R.from_matrix(R_ce).as_rotvec()
+    rotvec_c = Rotation.from_matrix(R_ce).as_rotvec()
 
     state_cam = np.concatenate([p_c, rotvec_c, state[6:]])
 
@@ -62,9 +63,9 @@ def transform_state_action_to_camera(state, action, T_wc):
     action_cam = action.copy()
     action_cam[:3] = R_cw @ action[:3]
 
-    delta_R_world = R.from_rotvec(action[3:6]).as_matrix() # action_cam[3:6] = R_cw @ action[3:6]
+    delta_R_world = Rotation.from_rotvec(action[3:6]).as_matrix()  # action_cam[3:6] = R_cw @ action[3:6]
     delta_R_cam = R_cw @ delta_R_world @ R_cw.T
-    action_cam[3:6] = R.from_matrix(delta_R_cam).as_rotvec()
+    action_cam[3:6] = Rotation.from_matrix(delta_R_cam).as_rotvec()
 
     return state_cam.astype(np.float32), action_cam.astype(np.float32)
 
@@ -78,44 +79,46 @@ def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, push_to_hub: 
     # Create LeRobot dataset, define features to store
     # OpenPi assumes that proprio is stored in `state` and actions in `action`
     # LeRobot assumes that dtype of image data is `image`
-    features={
-            "image": {
-                "dtype": "image",
-                "shape": (256, 256, 3),
-                "names": ["height", "width", "channel"],
-            },
-            "wrist_image": {
-                "dtype": "image",
-                "shape": (256, 256, 3),
-                "names": ["height", "width", "channel"],
-            },
-            "state": {
-                "dtype": "float32",
-                "shape": (8,),
-                "names": ["state"],
-            },
-            "actions": {
-                "dtype": "float32",
-                "shape": (7,),
-                "names": ["actions"],
-            },
-        }
-    
+    features = {
+        "image": {
+            "dtype": "image",
+            "shape": (256, 256, 3),
+            "names": ["height", "width", "channel"],
+        },
+        "wrist_image": {
+            "dtype": "image",
+            "shape": (256, 256, 3),
+            "names": ["height", "width", "channel"],
+        },
+        "state": {
+            "dtype": "float32",
+            "shape": (8,),
+            "names": ["state"],
+        },
+        "actions": {
+            "dtype": "float32",
+            "shape": (7,),
+            "names": ["actions"],
+        },
+    }
+
     use_cam = "cam" in repo_name
     if use_cam:
-        features.update({
-            "agent_extrinsic": {
-                "dtype": "float32",
-                "shape": (4, 4),
-                "names": ["row", "col"],
-            },
-            "wrist_extrinsic": {
-                "dtype": "float32",
-                "shape": (4, 4),
-                "names": ["row", "col"],
-            },
-        })
-        
+        features.update(
+            {
+                "agent_extrinsic": {
+                    "dtype": "float32",
+                    "shape": (4, 4),
+                    "names": ["row", "col"],
+                },
+                "wrist_extrinsic": {
+                    "dtype": "float32",
+                    "shape": (4, 4),
+                    "names": ["row", "col"],
+                },
+            }
+        )
+
     dataset = LeRobotDataset.create(
         repo_id=repo_name,
         robot_type="panda",
@@ -131,7 +134,6 @@ def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, push_to_hub: 
         raw_dataset = tfds.load(raw_dataset_name, data_dir=data_dir, split="train")
         for episode in raw_dataset:
             for step in episode["steps"].as_numpy_iterator():
-                
                 if use_cam:
                     agent_extrinsic = step["observation"]["agent_extrinsic"]
                     state = step["observation"]["state"]
@@ -143,18 +145,18 @@ def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, push_to_hub: 
                     )
                 else:
                     state_trans, action_trans = step["observation"]["state"], step["action"]
-                
+
                 frame = {
                     "image": step["observation"]["image"],
                     "wrist_image": step["observation"]["wrist_image"],
                     "state": state_trans,
                     "actions": action_trans,
                     "task": step["language_instruction"].decode(),
-                    }
+                }
                 if use_cam:
                     frame["agent_extrinsic"] = step["observation"]["agent_extrinsic"]
                     frame["wrist_extrinsic"] = step["observation"]["wrist_extrinsic"]
-    
+
                 dataset.add_frame(frame)
             dataset.save_episode()
 

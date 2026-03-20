@@ -93,11 +93,11 @@ class Observation(Generic[ArrayT]):
     image_masks: dict[str, at.Bool[ArrayT, "*b"]]
     # Low-dimensional robot state.
     state: at.Float[ArrayT, "*b s"]
-    
-    # ------ new optional field ------ 
+
+    # ------ new optional field ------
     agent_extrinsic: at.Float[ArrayT, "*b 4 4"] | None = None
     wrist_extrinsic: at.Float[ArrayT, "*b 4 4"] | None = None
-    
+
     # Tokenized prompt.
     tokenized_prompt: at.Int[ArrayT, "*b l"] | None = None
     # Tokenized prompt mask.
@@ -126,8 +126,8 @@ class Observation(Generic[ArrayT]):
             images=data["image"],
             image_masks=data["image_mask"],
             state=data["state"],
-            agent_extrinsic=data.get("agent_extrinsic"),   # ---- NEW ----
-            wrist_extrinsic=data.get("wrist_extrinsic"),   # ---- NEW ----
+            agent_extrinsic=data.get("agent_extrinsic"),  # ---- NEW ----
+            wrist_extrinsic=data.get("wrist_extrinsic"),  # ---- NEW ----
             tokenized_prompt=data.get("tokenized_prompt"),
             tokenized_prompt_mask=data.get("tokenized_prompt_mask"),
             token_ar_mask=data.get("token_ar_mask"),
@@ -138,7 +138,7 @@ class Observation(Generic[ArrayT]):
         """Convert the Observation to a nested dict."""
         result = dataclasses.asdict(self)
         result["image"] = result.pop("images")
-        result["image_mask"] = result.pop("image_masks")            
+        result["image_mask"] = result.pop("image_masks")
         return result
 
 
