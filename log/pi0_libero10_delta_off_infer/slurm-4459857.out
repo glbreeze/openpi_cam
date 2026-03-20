@@ -1,0 +1,43 @@
+===== ENV CHECK =====
+repo root: /scratch/yp2841/geometry-vla/openpi_cam
+config: pi0_libero_spatial_pytorch_10k_delta_off
+checkpoint root: /scratch/yp2841/geometry-vla/openpi_cam/checkpoints/pi0_libero_spatial_pytorch_10k_delta_off
+checkpoint exp: pi0_libero_spatial_10k_delta_off_4363046
+checkpoint step: 30000
+checkpoint dir: /scratch/yp2841/geometry-vla/openpi_cam/checkpoints/pi0_libero_spatial_pytorch_10k_delta_off/pi0_libero_spatial_10k_delta_off_4363046/30000
+task suite: libero_10
+trials per task: 50
+video out root: /scratch/yp2841/geometry-vla/openpi_cam/log/pi0_libero10_delta_off_infer/videos/4459857
+libero root: /scratch/yp2841/TFP/third_party/libero
+/scratch/yp2841/geometry-vla/openpi_cam/.venv/bin/python
+Python 3.11.14
+gl020.hpc.nyu.edu
+GPU 0: NVIDIA L40S (UUID: GPU-cce1e245-fa84-f85b-b4d4-553a7eb74ce9)
+Starting policy server...
+Waiting for policy server on 127.0.0.1:8000...
+Client env:
+/scratch/yp2841/geometry-vla/openpi_cam/.venv/bin/python
+Python 3.11.14
+[info] using task orders [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+[Warning]: datasets path /scratch/yp2841/TFP/third_party/libero/libero/datasets does not exist!
+LIBERO inference complete.
+Stopping policy server (pid=4034550)...

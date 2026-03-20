@@ -17,6 +17,8 @@ set -euo pipefail
 resolve_repo_root() {
   local candidate
   local script_root=""
+  local probe
+  local child
 
   if script_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd); then
     :
@@ -24,14 +26,23 @@ resolve_repo_root() {
     script_root=""
   fi
 
-  for candidate in "${REPO_ROOT:-}" "${OPENPI_CAM_ROOT:-}" "${SLURM_SUBMIT_DIR:-}" "${script_root}"; do
+  for candidate in "${REPO_ROOT:-}" "${OPENPI_CAM_ROOT:-}" "${SLURM_SUBMIT_DIR:-}" "${PWD:-}" "${script_root}"; do
     [[ -n "${candidate}" ]] || continue
-    while [[ "${candidate}" != "/" ]]; do
-      if [[ -f "${candidate}/scripts/env/activate_env.sh" ]]; then
-        printf '%s\n' "${candidate}"
+
+    probe="${candidate}"
+    while [[ "${probe}" != "/" ]]; do
+      if [[ -f "${probe}/scripts/env/activate_env.sh" ]]; then
+        printf '%s\n' "${probe}"
         return 0
       fi
-      candidate=$(dirname -- "${candidate}")
+      probe=$(dirname -- "${probe}")
+    done
+
+    for child in "openpi_cam" "openpi_cam/openpi_cam"; do
+      if [[ -f "${candidate}/${child}/scripts/env/activate_env.sh" ]]; then
+        printf '%s\n' "${candidate}/${child}"
+        return 0
+      fi
     done
   done
 
@@ -76,7 +87,7 @@ REPLAN_STEPS=${REPLAN_STEPS:-5}
 NUM_STEPS_WAIT=${NUM_STEPS_WAIT:-10}
 CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-16}
 
-LIBERO_ROOT=${LIBERO_ROOT:-/scratch/yp2841/LIBERO-plus}
+LIBERO_ROOT=${LIBERO_ROOT:-/scratch/yp2841/TFP/third_party/libero}
 
 LOG_ROOT=${LOG_ROOT:-${REPO_ROOT}/log/pi0_libero_infer}
 VIDEO_OUT_ROOT=${VIDEO_OUT_ROOT:-${LOG_ROOT}/videos/${SLURM_JOB_ID:-manual}}

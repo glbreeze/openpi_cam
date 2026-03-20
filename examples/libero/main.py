@@ -11,6 +11,7 @@ from libero.libero.envs import OffScreenRenderEnv
 import numpy as np
 from openpi_client import image_tools
 from openpi_client import websocket_client_policy as _websocket_client_policy
+import torch
 import tqdm
 import tyro
 
@@ -89,7 +90,7 @@ def eval_libero(args: Args) -> None:
         task = task_suite.get_task(task_id)
 
         # Get default LIBERO initial states
-        initial_states = task_suite.get_task_init_states(task_id)
+        initial_states = _load_task_init_states(task)
 
         # Initialize LIBERO environment and task description
         env, task_description = _get_libero_env(task, LIBERO_ENV_RESOLUTION, args.seed)
@@ -204,6 +205,11 @@ def _get_libero_env(task, resolution, seed):
     env = OffScreenRenderEnv(**env_args)
     env.seed(seed)  # IMPORTANT: seed seems to affect object positions even when using fixed initial state
     return env, task_description
+
+
+def _load_task_init_states(task):
+    init_states_path = pathlib.Path(get_libero_path("init_states")) / task.problem_folder / task.init_states_file
+    return torch.load(init_states_path, weights_only=False)
 
 
 def _quat2axisangle(quat):
