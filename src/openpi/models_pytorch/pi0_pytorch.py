@@ -98,8 +98,8 @@ class PI0Pytorch(nn.Module):
             action_expert_config,
             use_adarms=[False, True] if self.pi05 else [False, False],
             precision=config.dtype,
-            cross_view_fusion = config.cross_view_fusion, 
-            pose_enc_type = config.pose_enc_type,
+            cross_view_fusion=config.cross_view_fusion,
+            pose_enc_type=config.pose_enc_type,
         )
 
         self.action_in_proj = nn.Linear(32, action_expert_config.width)
@@ -197,29 +197,25 @@ class PI0Pytorch(nn.Module):
         embs = []
         pad_masks = []
         att_masks = []
-        
-        cam_keys = [name.split('_0_rgb')[0] for name in obs.images.keys()]
+
+        cam_keys = [name.split("_0_rgb")[0] for name in obs.images]
         if self.pose_enc_type != "null":
-            cam_pos = {
-                "base": obs.agent_extrinsic,
-                "left_wrist": obs.wrist_extrinsic,
-                "right_wrist": None
-            }
+            cam_pos = {"base": obs.agent_extrinsic, "left_wrist": obs.wrist_extrinsic, "right_wrist": None}
         else:
             cam_pos = None
 
         # -------------- Process images (vision_tower + multi_modal_projector) --------------
-        import pdb; pdb.set_trace()
         def image_embed_func(images, img_masks, cam_pos):
             return self.paligemma_with_expert.embed_image(images, img_masks, cam_pos=cam_pos, cam_keys=cam_keys)
-    
-        img_emb, img_masks = self._apply_checkpoint(image_embed_func, images, img_masks, cam_pos) # [B, 256, 2048] here just img for one cam
-        
+
+        img_emb, img_masks = self._apply_checkpoint(
+            image_embed_func, images, img_masks, cam_pos
+        )  # [B, 256, 2048] here just img for one cam
+
         embs.append(img_emb)
         pad_masks.append(img_masks)
         att_masks += [0] * img_emb.shape[1]
-    
-            
+
         # -------------- Process language tokens --------------
         def lang_embed_func(lang_tokens):
             lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
@@ -230,7 +226,7 @@ class PI0Pytorch(nn.Module):
 
         embs.append(lang_emb)
         pad_masks.append(lang_masks)
-        
+
         # full attention between image and language inputs
         num_lang_embs = lang_emb.shape[1]
         att_masks += [0] * num_lang_embs
@@ -251,7 +247,7 @@ class PI0Pytorch(nn.Module):
         pad_masks = []
         att_masks = []
 
-        # ----------------------- Embed state  ----------------------- 
+        # ----------------------- Embed state  -----------------------
         if not self.pi05:
             if self.state_proj.weight.dtype == torch.float32:
                 state = state.to(torch.float32)
@@ -271,20 +267,20 @@ class PI0Pytorch(nn.Module):
             # Set attention masks so that image and language inputs do not attend to state or actions
             att_masks += [1]
 
-        # ----------------------- Embed time  ----------------------- 
+        # ----------------------- Embed time  -----------------------
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = create_sinusoidal_pos_embedding(
             timestep, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0, device=timestep.device
         )
         time_emb = time_emb.type(dtype=timestep.dtype)
 
-        # ----------------------- Embed action  ----------------------- 
+        # ----------------------- Embed action  -----------------------
         def action_proj_func(noisy_actions):
             return self.action_in_proj(noisy_actions)
 
         action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
 
-        # -------------- Fuse timestep + action information using an MLP  -------------- 
+        # -------------- Fuse timestep + action information using an MLP  --------------
         if not self.pi05:
             time_emb = time_emb[:, None, :].expand_as(action_emb)
             action_time_emb = torch.cat([action_emb, time_emb], dim=2)
@@ -329,13 +325,13 @@ class PI0Pytorch(nn.Module):
 
     def forward(self, observation, actions, noise=None, time=None) -> Tensor:
         # observation: images{'base_0_rgb', 'left_wrist_0_rgb', 'right_wrist_0_rgb'}, image_masks
-        # state [b, 32]  tokenized_prompt,tokenized_prompt_mask [32, 48], 
+        # state [b, 32]  tokenized_prompt,tokenized_prompt_mask [32, 48],
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=True)
-        
-        # images, img_masks: -> lists 
 
-        # ----------------- get noisy actions  ----------------- 
+        # images, img_masks: -> lists
+
+        # ----------------- get noisy actions  -----------------
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
 
@@ -345,14 +341,16 @@ class PI0Pytorch(nn.Module):
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
-        
-        #import pdb; pdb.set_trace()
-        images = torch.stack(images, dim=1)       # [B, V, 3, 224, 224]
-        img_masks = torch.stack(img_masks, dim=1) # [B, V]
-        # ----------------- embed img + language  ----------------- 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks, obs=observation)
-        
-        # ----------------- embed state + time_action  ----------------- 
+
+        # import pdb; pdb.set_trace()
+        images = torch.stack(images, dim=1)  # [B, V, 3, 224, 224]
+        img_masks = torch.stack(img_masks, dim=1)  # [B, V]
+        # ----------------- embed img + language  -----------------
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, obs=observation
+        )
+
+        # ----------------- embed state + time_action  -----------------
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, time)
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -368,7 +366,7 @@ class PI0Pytorch(nn.Module):
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
 
         # Prepare attention masks
-        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks) # [batch_size, 1, 867, 867]
+        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)  # [batch_size, 1, 867, 867]
 
         # Apply gradient checkpointing if enabled
         def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):

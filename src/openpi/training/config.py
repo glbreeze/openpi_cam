@@ -33,7 +33,7 @@ ModelType: TypeAlias = _model.ModelType
 # Work around a tyro issue with using nnx.filterlib.Filter directly.
 Filter: TypeAlias = nnx.filterlib.Filter
 
-HF_NAME="glbreeze"
+HF_NAME = "glbreeze"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -301,7 +301,7 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         # For your own dataset, first figure out what keys your environment passes to the policy server
         # and then modify the mappings below so your dataset's keys get matched to those target keys.
         # The repack transform simply remaps key names here.
-        
+
         repack_structure = {
             "observation/image": "image",
             "observation/wrist_image": "wrist_image",
@@ -310,16 +310,14 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
             "prompt": "prompt",
         }
         if self.include_cam_extrinsics:
-            repack_structure.update({
-                "observation/agent_extrinsic": "agent_extrinsic",
-                "observation/wrist_extrinsic": "wrist_extrinsic",
-            })
-        
-        repack_transform = _transforms.Group(
-            inputs=[
-                _transforms.RepackTransform(repack_structure)
-            ]
-        )
+            repack_structure.update(
+                {
+                    "observation/agent_extrinsic": "agent_extrinsic",
+                    "observation/wrist_extrinsic": "wrist_extrinsic",
+                }
+            )
+
+        repack_transform = _transforms.Group(inputs=[_transforms.RepackTransform(repack_structure)])
 
         # The data transforms are applied to the data coming from the dataset *and* during inference.
         # Below, we define the transforms for data going into the model (``inputs``) and the transforms
@@ -649,23 +647,19 @@ _CONFIGS = [
             ),
         ),
     ),
-    
     # ---------- add new config for libero_cam  ----------
     TrainConfig(
         name="pi0_libero_cam",
-        model=pi0_config.Pi0Config(pose_enc_type='null'), # -------- add here  -------- 
+        model=pi0_config.Pi0Config(pose_enc_type="null"),  # -------- add here  --------
         data=LeRobotLiberoDataConfig(
             repo_id=f"{HF_NAME}/libero_cam",
             base_config=DataConfig(prompt_from_task=True),
-            extra_delta_transform=False,  # --------------------- I have changed it here --------------------- 
+            extra_delta_transform=False,  # --------------------- I have changed it here ---------------------
             include_cam_extrinsics=True,
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader(
-            "gs://openpi-assets/checkpoints/pi0_base/params"
-        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
         num_train_steps=30_000,
-    ), 
-    
+    ),
     #
     # Fine-tuning Libero configs.
     #
@@ -687,11 +681,11 @@ _CONFIGS = [
         data=LeRobotLiberoDataConfig(
             repo_id=f"{HF_NAME}/libero",
             base_config=DataConfig(prompt_from_task=True),
-                # This flag determines whether we load the prompt (i.e. the task instruction) from the
-                # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
-                # a field called ``prompt`` in the input dict. The recommended setting is True.
-            extra_delta_transform=False,    # --------------------- I have changed it here --------------------- 
-            include_cam_extrinsics=False
+            # This flag determines whether we load the prompt (i.e. the task instruction) from the
+            # ``task`` field in the LeRobot dataset. If set to True, the prompt will show up in
+            # a field called ``prompt`` in the input dict. The recommended setting is True.
+            extra_delta_transform=False,  # --------------------- I have changed it here ---------------------
+            include_cam_extrinsics=False,
         ),
         # Here you define which pre-trained checkpoint you want to load to initialize the model.
         # This should match the model config you chose above -- i.e. in this case we use the pi0 base model.
