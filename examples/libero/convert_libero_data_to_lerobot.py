@@ -24,40 +24,61 @@ from lerobot.common.datasets.lerobot_dataset import HF_LEROBOT_HOME
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 import tensorflow_datasets as tfds
 import tyro
-
-REPO_NAME = "glbreeze/libero_cam"  # Name of the output dataset, also used for the Hugging Face Hub
+from scipy.spatial.transform import Rotation as R
+import numpy as np
 
 RAW_DATASET_NAMES = [
-    "libero_10",
-    "libero_goal",
-    "libero_object",
-    "libero_spatial",
+    "libero_10_no_noops",
+    "libero_goal_no_noops",
+    "libero_object_no_noops",
+    "libero_spatial_no_noops",
 ]  # For simplicity we will combine multiple Libero datasets into one training dataset
 
-# RAW_DATASET_NAMES = [
-#     "libero_10_no_noops",
-#     "libero_goal_no_noops",
-#     "libero_object_no_noops",
-#     "libero_spatial_no_noops",
-# ]  # For simplicity we will combine multiple Libero datasets into one training dataset
+def transform_state_action_to_camera(state, action, T_wc):
+    """
+    Convert state and action from world frame to camera frame.
+    state  : [x,y,z,rx,ry,rz, g1,g2]
+    action : [dx,dy,dz, drx,dry,drz, g]
+    T_wc   : camera extrinsic (world <- camera)
+    """
+    state = np.asarray(state)
+    action = np.asarray(action)
 
-# RAW_DATASET_NAMES = ["libero_plus"]
+    T_cw = np.linalg.inv(T_wc)
+    R_cw = T_cw[:3, :3]
+
+    # --- transform state position ---
+    p_w = state[:3]
+    p_c = R_cw @ (p_w - T_wc[:3, 3])
+
+    # --- transform state orientation ---
+    R_we = R.from_rotvec(state[3:6]).as_matrix()
+    R_ce = R_cw @ R_we
+    rotvec_c = R.from_matrix(R_ce).as_rotvec()
+
+    state_cam = np.concatenate([p_c, rotvec_c, state[6:]])
+
+    # --- transform action deltas ---
+    action_cam = action.copy()
+    action_cam[:3] = R_cw @ action[:3]
+
+    delta_R_world = R.from_rotvec(action[3:6]).as_matrix() # action_cam[3:6] = R_cw @ action[3:6]
+    delta_R_cam = R_cw @ delta_R_world @ R_cw.T
+    action_cam[3:6] = R.from_matrix(delta_R_cam).as_rotvec()
+
+    return state_cam.astype(np.float32), action_cam.astype(np.float32)
 
 
-def main(data_dir: str, *, push_to_hub: bool = False):
+def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, push_to_hub: bool = False):
     # Clean up any existing dataset in the output directory
-    output_path = HF_LEROBOT_HOME / REPO_NAME
+    output_path = HF_LEROBOT_HOME / repo_name
     if output_path.exists():
         shutil.rmtree(output_path)
 
     # Create LeRobot dataset, define features to store
     # OpenPi assumes that proprio is stored in `state` and actions in `action`
     # LeRobot assumes that dtype of image data is `image`
-    dataset = LeRobotDataset.create(
-        repo_id=REPO_NAME,
-        robot_type="panda",
-        fps=10,
-        features={
+    features={
             "image": {
                 "dtype": "image",
                 "shape": (256, 256, 3),
@@ -78,6 +99,11 @@ def main(data_dir: str, *, push_to_hub: bool = False):
                 "shape": (7,),
                 "names": ["actions"],
             },
+        }
+    
+    use_cam = "cam" in repo_name
+    if use_cam:
+        features.update({
             "agent_extrinsic": {
                 "dtype": "float32",
                 "shape": (4, 4),
@@ -88,7 +114,13 @@ def main(data_dir: str, *, push_to_hub: bool = False):
                 "shape": (4, 4),
                 "names": ["row", "col"],
             },
-        },
+        })
+        
+    dataset = LeRobotDataset.create(
+        repo_id=repo_name,
+        robot_type="panda",
+        fps=10,
+        features=features,
         image_writer_threads=10,
         image_writer_processes=5,
     )
@@ -99,17 +131,31 @@ def main(data_dir: str, *, push_to_hub: bool = False):
         raw_dataset = tfds.load(raw_dataset_name, data_dir=data_dir, split="train")
         for episode in raw_dataset:
             for step in episode["steps"].as_numpy_iterator():
-                dataset.add_frame(
-                    {
-                        "image": step["observation"]["image"],
-                        "wrist_image": step["observation"]["wrist_image"],
-                        "state": step["observation"]["state"],
-                        "actions": step["action"],
-                        "agent_extrinsic": step["observation"]["agent_extrinsic"],
-                        "wrist_extrinsic": step["observation"]["wrist_extrinsic"],
-                        "task": step["language_instruction"].decode(),
+                
+                if use_cam:
+                    agent_extrinsic = step["observation"]["agent_extrinsic"]
+                    state = step["observation"]["state"]
+                    action = step["action"]
+
+                    # Transform to camera frame
+                    state_trans, action_trans = transform_state_action_to_camera(
+                        state=state, action=action, T_wc=agent_extrinsic
+                    )
+                else:
+                    state_trans, action_trans = step["observation"]["state"], step["action"]
+                
+                frame = {
+                    "image": step["observation"]["image"],
+                    "wrist_image": step["observation"]["wrist_image"],
+                    "state": state_trans,
+                    "actions": action_trans,
+                    "task": step["language_instruction"].decode(),
                     }
-                )
+                if use_cam:
+                    frame["agent_extrinsic"] = step["observation"]["agent_extrinsic"]
+                    frame["wrist_extrinsic"] = step["observation"]["wrist_extrinsic"]
+    
+                dataset.add_frame(frame)
             dataset.save_episode()
 
     # Optionally push to the Hugging Face Hub

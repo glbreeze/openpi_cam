@@ -300,8 +300,8 @@ def create_torch_data_loader(
     """
     dataset = create_torch_dataset(data_config, action_horizon, model_config)
     dataset = transform_dataset(dataset, data_config, skip_norm_stats=skip_norm_stats)
-    
-    tp = dataset.__getitem__(0)
+    # import pdb;  pdb.set_trace()
+    # tp = dataset.__getitem__(0)
 
     # Use TorchDataLoader for both frameworks
     # For PyTorch DDP, create DistributedSampler and divide batch size by world size
