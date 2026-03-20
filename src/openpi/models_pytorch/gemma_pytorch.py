@@ -9,6 +9,64 @@ from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.gemma import modeling_gemma
 
 
+class CrossViewFusion(nn.Module):
+    def __init__(self, dim, num_heads=8, mlp_ratio=4.0):
+        super().__init__()
+
+        self.norm1 = modeling_gemma.GemmaRMSNorm(dim)
+        self.attn = nn.MultiheadAttention(
+            embed_dim=dim,
+            num_heads=num_heads,
+            batch_first=True
+        )
+
+        self.norm2 = modeling_gemma.GemmaRMSNorm(dim)
+
+        hidden_dim = int(dim * mlp_ratio)
+
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, dim),
+        )
+
+    def forward(self, x, mask=None):
+
+        x_norm, _ = self.norm1(x)
+
+        attn_out, _ = self.attn(
+            x_norm, x_norm, x_norm,
+            key_padding_mask=(mask == 0) if mask is not None else None
+        )
+
+        x = x + attn_out
+        x_norm, _ = self.norm2(x)
+        x = x + self.mlp(x_norm)
+        return x
+    
+
+class CamPoseEncoder(nn.Module):
+    def __init__(self, dim: int, hidden_dim: int = 256):
+        super().__init__()
+
+        self.mlp = nn.Sequential(
+            nn.Linear(9, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, dim),
+        )
+
+    def forward(self, pose):
+        # pose: (B, 9) or (B, V, 9)
+
+        if pose.dim() == 3:
+            B, V, D = pose.shape
+            pose = pose.reshape(B * V, D)
+            out = self.mlp(pose)
+            return out.reshape(B, V, -1)
+
+        return self.mlp(pose)
+
+
 class PaliGemmaWithExpertModel(nn.Module):
     def __init__(
         self,
@@ -16,6 +74,8 @@ class PaliGemmaWithExpertModel(nn.Module):
         action_expert_config,
         use_adarms=None,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
+        cross_view_fusion: bool = False,
+        pose_enc_type: Literal["null", "relative_pose", "absolute_pose"] = "null",
     ):
         if use_adarms is None:
             use_adarms = [False, False]
@@ -57,6 +117,19 @@ class PaliGemmaWithExpertModel(nn.Module):
         self.paligemma = PaliGemmaForConditionalGeneration(config=vlm_config_hf)  # vlm (vision + gemma LLM)
         self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)  # action expert
         self.gemma_expert.model.embed_tokens = None
+        
+        self.use_cross_view_fusion = cross_view_fusion
+        self.pose_enc_type = pose_enc_type
+        self.num_views = 3  # Pi-0: agent + wrist + wrist2
+        
+        if cross_view_fusion:
+            self.cross_view_fusion = CrossViewFusion(dim=vlm_config_hf.vision_config.hidden_size)
+            self.view_embedding = nn.Embedding(
+                num_embeddings=self.num_views,
+                embedding_dim=vlm_config_hf.vision_config.hidden_size  # must match token dim D
+            )
+        if pose_enc_type != "null":
+            self.cam_pose_encoder = CamPoseEncoder(vlm_config_hf.vision_config.hidden_size)
 
         self.to_bfloat16_for_selected_params(precision)
 
@@ -82,8 +155,88 @@ class PaliGemmaWithExpertModel(nn.Module):
             if any(selector in name for selector in params_to_keep_float32):
                 param.data = param.data.to(dtype=torch.float32)
 
-    def embed_image(self, image: torch.Tensor):
-        return self.paligemma.model.get_image_features(image)
+    def embed_image(
+        self,
+        images: torch.Tensor,
+        img_masks: torch.Tensor,
+        cam_pos: dict | None = None,
+        cam_keys: list | None = None,
+    ):
+    
+        B, V, C, H, W = images.shape
+
+        vision_tower = self.paligemma.model.vision_tower
+        projector = self.paligemma.model.multi_modal_projector
+        
+        images = images.view(B * V, C, H, W)
+        tokens = vision_tower(images).last_hidden_state # [B*V, P, D]
+        P, D = tokens.shape[1], tokens.shape[2]
+        tokens = tokens.reshape(B, V, P, D)
+        
+        # -------- helpers --------
+        def encode_pose(pose):
+            R = pose[..., :3, :3]
+            t = pose[..., :3, 3]
+            rot6d = R[..., :, :2].reshape(pose.shape[0], -1)  # (B,6)
+            return torch.cat([t, rot6d], dim=-1).to(device=tokens.device, dtype=tokens.dtype)              # (B,9)
+        
+        def make_null_token() -> torch.Tensor:
+            return torch.zeros(B, 1, D, device=tokens.device, dtype=tokens.dtype)
+
+        def compute_rel_pose(agent_T, wrist_T):
+            return torch.linalg.inv(agent_T) @ wrist_T  # (B,4,4)
+        
+        # --------- camera token injection --------- 
+        if self.pose_enc_type != "null":
+            cam_tokens = []
+            
+            if self.pose_enc_type == 'relative_pose':
+                agent_T = cam_pos["base"]   # (B,4,4)
+                
+                for cam_key in cam_keys:
+                    if cam_key == "base" or cam_pos.get(cam_key) is None:
+                        cam_tokens.append(make_null_token())
+                    elif cam_pos.get(cam_key) is not None:
+                        wrist_T = compute_rel_pose(agent_T, cam_pos[cam_key])   # (B,4,4)
+                        cam_token = self.cam_pose_encoder(encode_pose(wrist_T)).unsqueeze(1)
+                        cam_tokens.append(cam_token)
+    
+            elif self.pose_enc_type == 'absolute_pose':
+          
+                for cam_key in cam_keys:
+                    if cam_pos[cam_key] is not None:
+                        cam_token = self.cam_pose_encoder(encode_pose(cam_pos[cam_key])).unsqueeze(1)
+                        cam_tokens.append(cam_token)
+                    else:
+                        cam_tokens.append(make_null_token())
+            cam_tokens = torch.cat(cam_tokens, dim=1)
+            cam_tokens = cam_tokens.unsqueeze(2)  # (B,V,1,D)
+            tokens = torch.cat([cam_tokens, tokens], dim=2)  # [B, V, P+1, D]
+            P = P+1
+            
+            # ------ update the image masks ------
+            masks = img_masks[:, :, None].expand(B, V, P)
+            
+            # -------- add view embedding --------
+            view_ids = torch.arange(V, device=cam_token.device)
+            view_embed = self.view_embedding(view_ids)  # (V,D)
+            tokens = tokens + view_embed[None, :, None, :]  # [B, V, 257, 1152]
+        
+        # -------- cross-view fusion --------         
+        if self.use_cross_view_fusion:
+            tokens = tokens.reshape(B, V * P, D)
+            
+            img_masks = masks.reshape(B, V * P)
+
+            tokens = self.cross_view_fusion(tokens, mask=img_masks)
+
+            tokens = tokens.reshape(B, V, P, D)
+        
+        # -------- projector --------
+        tokens = tokens.reshape(B * V, P, D)
+        tokens = projector(tokens)
+        return tokens.reshape(B, V*P, -1), masks.reshape(B, V*P)
+            
 
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.language_model.embed_tokens(tokens)
@@ -99,7 +252,6 @@ class PaliGemmaWithExpertModel(nn.Module):
     ):
         if adarms_cond is None:
             adarms_cond = [None, None]
-            
         # --------- case 1: prefix only --------- 
         if inputs_embeds[1] is None:
             prefix_output = self.paligemma.language_model.forward(
