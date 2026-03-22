@@ -70,7 +70,29 @@ def transform_state_action_to_camera(state, action, T_wc):
     return state_cam.astype(np.float32), action_cam.astype(np.float32)
 
 
-def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, push_to_hub: bool = False):
+def _resolve_raw_dataset_names(raw_dataset_names: str | None) -> list[str]:
+    if raw_dataset_names is None:
+        return list(RAW_DATASET_NAMES)
+    names = [name.strip() for name in raw_dataset_names.split(",") if name.strip()]
+    if not names:
+        raise ValueError("raw_dataset_names must contain at least one dataset name.")
+    return names
+
+
+def main(
+    data_dir: str,
+    repo_name: str = "glbreeze/libero_cam",
+    raw_dataset_names: str | None = None,
+    include_cam_extrinsics: bool = False,
+    transform_state_actions_to_camera: bool = False,
+    *,
+    push_to_hub: bool = False,
+):
+    raw_dataset_names = _resolve_raw_dataset_names(raw_dataset_names)
+    include_cam_extrinsics = include_cam_extrinsics or ("cam" in repo_name)
+    if transform_state_actions_to_camera and not include_cam_extrinsics:
+        raise ValueError("transform_state_actions_to_camera=True requires include_cam_extrinsics=True.")
+
     # Clean up any existing dataset in the output directory
     output_path = HF_LEROBOT_HOME / repo_name
     if output_path.exists():
@@ -102,8 +124,7 @@ def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, push_to_hub: 
         },
     }
 
-    use_cam = "cam" in repo_name
-    if use_cam:
+    if include_cam_extrinsics:
         features.update(
             {
                 "agent_extrinsic": {
@@ -130,21 +151,17 @@ def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, push_to_hub: 
 
     # Loop over raw Libero datasets and write episodes to the LeRobot dataset
     # You can modify this for your own data format
-    for raw_dataset_name in RAW_DATASET_NAMES:
+    for raw_dataset_name in raw_dataset_names:
         raw_dataset = tfds.load(raw_dataset_name, data_dir=data_dir, split="train")
         for episode in raw_dataset:
             for step in episode["steps"].as_numpy_iterator():
-                if use_cam:
-                    agent_extrinsic = step["observation"]["agent_extrinsic"]
-                    state = step["observation"]["state"]
-                    action = step["action"]
+                state_trans, action_trans = step["observation"]["state"], step["action"]
 
-                    # Transform to camera frame
+                if transform_state_actions_to_camera:
+                    agent_extrinsic = step["observation"]["agent_extrinsic"]
                     state_trans, action_trans = transform_state_action_to_camera(
-                        state=state, action=action, T_wc=agent_extrinsic
+                        state=state_trans, action=action_trans, T_wc=agent_extrinsic
                     )
-                else:
-                    state_trans, action_trans = step["observation"]["state"], step["action"]
 
                 frame = {
                     "image": step["observation"]["image"],
@@ -153,7 +170,7 @@ def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, push_to_hub: 
                     "actions": action_trans,
                     "task": step["language_instruction"].decode(),
                 }
-                if use_cam:
+                if include_cam_extrinsics:
                     frame["agent_extrinsic"] = step["observation"]["agent_extrinsic"]
                     frame["wrist_extrinsic"] = step["observation"]["wrist_extrinsic"]
 

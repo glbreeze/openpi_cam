@@ -159,7 +159,8 @@ class PaliGemmaWithExpertModel(nn.Module):
         vision_tower = self.paligemma.model.vision_tower
         projector = self.paligemma.model.multi_modal_projector
 
-        images = images.view(B * V, C, H, W)
+        # Use reshape to safely handle non-contiguous tensors from dataloader/stacking.
+        images = images.reshape(B * V, C, H, W)
         tokens = vision_tower(images).last_hidden_state  # [B*V, P, D]
         P, D = tokens.shape[1], tokens.shape[2]
         tokens = tokens.reshape(B, V, P, D)
@@ -208,9 +209,12 @@ class PaliGemmaWithExpertModel(nn.Module):
             masks = img_masks[:, :, None].expand(B, V, P)
 
             # -------- add view embedding --------
-            view_ids = torch.arange(V, device=cam_token.device)
+            view_ids = torch.arange(V, device=tokens.device)
             view_embed = self.view_embedding(view_ids)  # (V,D)
             tokens = tokens + view_embed[None, :, None, :]  # [B, V, 257, 1152]
+        else:
+            # Keep masks consistent when no camera token is injected.
+            masks = img_masks[:, :, None].expand(B, V, P)
 
         # -------- cross-view fusion --------
         if self.use_cross_view_fusion:

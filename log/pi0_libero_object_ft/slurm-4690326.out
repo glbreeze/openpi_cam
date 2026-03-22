@@ -1,0 +1,20 @@
+===== TRAIN ENV CHECK =====
+repo root: /scratch/yp2841/geometry-vla/openpi_cam
+use_cam: false
+config: pi0_libero_pytorch_full_finetune
+exp: pi0_libero_object_4690326
+dataset: /scratch/yp2841/geometry-vla/glbreeze/libero_object
+base model: /scratch/yp2841/geometry-vla/pi0_base
+norm stats: /scratch/yp2841/geometry-vla/pi0_libero/glbreeze/libero_object
+checkpoints: /scratch/yp2841/geometry-vla/openpi_cam/checkpoints
+wandb root: /state/partition1/job-4690326/openpi_cam_4690326/wandb_root
+num_gpus: 4
+batch_size: 32
+num_train_steps: 30000
+/scratch/yp2841/geometry-vla/openpi_cam/.venv/bin/python
+Python 3.11.14
+gh108.hpc.nyu.edu
+GPU 0: NVIDIA H200 (UUID: GPU-063e01fe-379a-2fdd-85d1-275ff683fc50)
+GPU 1: NVIDIA H200 (UUID: GPU-22b83441-5327-efb2-acc5-ad69b0eacee7)
+GPU 2: NVIDIA H200 (UUID: GPU-e09d6d3e-02ea-4da2-395a-b12b71dcdbdb)
+GPU 3: NVIDIA H200 (UUID: GPU-e4932b26-d1ec-06ef-2eb4-b4ee63e0c6a8)
