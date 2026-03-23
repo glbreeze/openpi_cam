@@ -1,0 +1,5 @@
+Evaluating checkpoint step 10000
+Starting policy server for checkpoint /scratch/yp2841/geometry-vla/openpi_cam/checkpoints/pi0_libero_pytorch_full_finetune/pi0_libero_object_4690327/10000 on port 18000
+Server log: /scratch/yp2841/geometry-vla/openpi_cam/log/libero_object_eval/server_logs/no_cam/serve_10000.log
+Running LIBERO eval for checkpoint 10000
+[info] using task orders [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
