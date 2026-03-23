@@ -2,18 +2,51 @@ import collections
 import dataclasses
 import logging
 import math
+import os
 import pathlib
+import sys
 
 import imageio
-from libero.libero import benchmark
-from libero.libero import get_libero_path
-from libero.libero.envs import OffScreenRenderEnv
 import numpy as np
 from openpi_client import image_tools
 from openpi_client import websocket_client_policy as _websocket_client_policy
 import torch
 import tqdm
 import tyro
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+GEO_ROOT = REPO_ROOT.parent
+THIRD_PARTY_LIBERO = REPO_ROOT / "third_party" / "libero"
+THIRD_PARTY_LIBERO_ROOT = THIRD_PARTY_LIBERO / "libero" / "libero"
+
+if str(THIRD_PARTY_LIBERO) not in sys.path:
+    sys.path.insert(0, str(THIRD_PARTY_LIBERO))
+
+if "LIBERO_CONFIG_PATH" not in os.environ:
+    default_libero_config = pathlib.Path.home() / ".libero_openpi_cam"
+    os.environ["LIBERO_CONFIG_PATH"] = str(default_libero_config)
+else:
+    default_libero_config = pathlib.Path(os.environ["LIBERO_CONFIG_PATH"])
+
+default_libero_config.mkdir(parents=True, exist_ok=True)
+libero_config_file = default_libero_config / "config.yaml"
+if not libero_config_file.exists():
+    libero_config_file.write_text(
+        "\n".join(
+            [
+                f"benchmark_root: {THIRD_PARTY_LIBERO_ROOT}",
+                f"bddl_files: {THIRD_PARTY_LIBERO_ROOT / 'bddl_files'}",
+                f"init_states: {THIRD_PARTY_LIBERO_ROOT / 'init_files'}",
+                f"datasets: {GEO_ROOT / 'libero_cam_rlds'}",
+                f"assets: {THIRD_PARTY_LIBERO_ROOT / 'assets'}",
+            ]
+        )
+        + "\n"
+    )
+
+from libero.libero import benchmark
+from libero.libero import get_libero_path
+from libero.libero.envs import OffScreenRenderEnv
 
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 LIBERO_ENV_RESOLUTION = 256  # resolution used to render training data
@@ -148,6 +181,8 @@ def eval_libero(args: Args) -> None:
                                     obs["robot0_gripper_qpos"],
                                 )
                             ),
+                            "observation/agent_extrinsic": _get_camera_extrinsic(env, "agentview"),
+                            "observation/wrist_extrinsic": _get_camera_extrinsic(env, "robot0_eye_in_hand"),
                             "prompt": str(task_description),
                         }
 
@@ -210,6 +245,17 @@ def _get_libero_env(task, resolution, seed):
 def _load_task_init_states(task):
     init_states_path = pathlib.Path(get_libero_path("init_states")) / task.problem_folder / task.init_states_file
     return torch.load(init_states_path, weights_only=False)
+
+
+def _get_camera_extrinsic(env, camera_name):
+    cam_id = env.sim.model.camera_name2id(camera_name)
+    cam_pos = np.asarray(env.sim.data.cam_xpos[cam_id], dtype=np.float32)
+    cam_rot = np.asarray(env.sim.data.cam_xmat[cam_id], dtype=np.float32).reshape(3, 3)
+
+    extrinsic = np.eye(4, dtype=np.float32)
+    extrinsic[:3, :3] = cam_rot
+    extrinsic[:3, 3] = cam_pos
+    return extrinsic
 
 
 def _quat2axisangle(quat):
