@@ -10,10 +10,11 @@ from openpi.models import model as _model
 import openpi.models.gemma as _gemma
 from openpi.shared import array_typing as at
 import openpi.shared.nnx_utils as nnx_utils
+from openpi.models.cross_view_config import CrossViewFusionConfig
 
 if TYPE_CHECKING:
     from openpi.models.pi0 import Pi0
-
+    
 
 @dataclasses.dataclass(frozen=True)
 class Pi0Config(_model.BaseModelConfig):
@@ -22,7 +23,7 @@ class Pi0Config(_model.BaseModelConfig):
     action_expert_variant: _gemma.Variant = "gemma_300m"
 
     # ------ NEW CONFIGS ------
-    cross_view_fusion: bool = False
+    cross_view: CrossViewFusionConfig = CrossViewFusionConfig()
     pose_enc_type: str = "null"  # "null" | "relative_pose" | "absolute_pose"
 
     # Set the model specific defaults.

@@ -12,7 +12,10 @@ source /home/asus/Research/openpi/.venv/bin/activate
 # Convert data to a LeRobot dataset 
 export HF_HOME=/home/asus/Research/datasets/huggingface
 nohup python examples/libero/convert_libero_data_to_lerobot.py --data_dir /home/asus/Research/datasets/libero_cam_rlds \
-  --repo-name glbreeze/libero_cam > libero_to_lerobot_cam.out 2>&1 &
+  --repo-name glbreeze/libero_cam --trans_base > libero_to_lerobot_cam.out 2>&1 &
+
+nohup python examples/libero/convert_libero_data_to_lerobot.py --data_dir /home/asus/Research/datasets/libero_cam_rlds \
+  --repo-name glbreeze/libero_cam_abs --trans_base > libero_to_lerobot_cam_abs.out 2>&1 &
 
 nohup python examples/libero/convert_libero_data_to_lerobot.py --data_dir /home/asus/Research/datasets/modified_libero_rlds \
   --repo-name glbreeze/libero > libero_to_lerobot_base.out 2>&1 &
@@ -43,7 +46,8 @@ python scripts/train_pytorch.py pi0_libero_cam \
   --exp_name test_run \
   --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base --batch_size 8 \
   --data.repo_id glbreeze/libero_cam \
-  --model.pose_enc_type absolute_pose --model.cross_view_fusion
+  --model.pose_enc_type absolute_pose \
+  --model.cross_view.enabled True --model.cross_view.aa_order 'fg'
 
 
 

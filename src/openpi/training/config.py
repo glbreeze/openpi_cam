@@ -649,6 +649,20 @@ _CONFIGS = [
     ),
     # ---------- add new config for libero_cam  ----------
     TrainConfig(
+        name="pi0_libero_cam_abs",
+        model=pi0_config.Pi0Config(pose_enc_type="abs"),  # -------- add here  --------
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_cam_abs",
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,  # --------------------- I have changed it here ---------------------
+            include_cam_extrinsics=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+    ),
+    
+    # ---------- add new config for libero_cam  ----------
+    TrainConfig(
         name="pi0_libero_cam",
         model=pi0_config.Pi0Config(pose_enc_type="null"),  # -------- add here  --------
         data=LeRobotLiberoDataConfig(

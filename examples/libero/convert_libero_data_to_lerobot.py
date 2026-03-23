@@ -70,11 +70,14 @@ def transform_state_action_to_camera(state, action, T_wc):
     return state_cam.astype(np.float32), action_cam.astype(np.float32)
 
 
-def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, push_to_hub: bool = False):
+def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, trans_base: bool = False, push_to_hub: bool = False):
     # Clean up any existing dataset in the output directory
     output_path = HF_LEROBOT_HOME / repo_name
     if output_path.exists():
         shutil.rmtree(output_path)
+    include_cam = 'cam' in repo_name
+    print(f'----- this data include cam info {include_cam} ----------')
+    print(f'----- this data transfrom action/state to agent cam frame {trans_base} ----------')
 
     # Create LeRobot dataset, define features to store
     # OpenPi assumes that proprio is stored in `state` and actions in `action`
@@ -102,8 +105,7 @@ def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, push_to_hub: 
         },
     }
 
-    use_cam = "cam" in repo_name
-    if use_cam:
+    if include_cam:
         features.update(
             {
                 "agent_extrinsic": {
@@ -134,7 +136,7 @@ def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, push_to_hub: 
         raw_dataset = tfds.load(raw_dataset_name, data_dir=data_dir, split="train")
         for episode in raw_dataset:
             for step in episode["steps"].as_numpy_iterator():
-                if use_cam:
+                if include_cam and trans_base:
                     agent_extrinsic = step["observation"]["agent_extrinsic"]
                     state = step["observation"]["state"]
                     action = step["action"]
@@ -153,7 +155,7 @@ def main(data_dir: str, repo_name: str = "glbreeze/libero_cam", *, push_to_hub: 
                     "actions": action_trans,
                     "task": step["language_instruction"].decode(),
                 }
-                if use_cam:
+                if include_cam:
                     frame["agent_extrinsic"] = step["observation"]["agent_extrinsic"]
                     frame["wrist_extrinsic"] = step["observation"]["wrist_extrinsic"]
 
