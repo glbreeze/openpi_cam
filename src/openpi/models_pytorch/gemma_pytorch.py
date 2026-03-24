@@ -119,9 +119,9 @@ class CrossViewFusion(nn.Module):
     
     def _process_frame_attention(self, tokens, B, S, P, C, layer_idx, pos=None, mask=None):
         if tokens.shape != (B * S, P, C):
-            tokens = tokens.view(B, S, P, C).view(B * S, P, C)
+            tokens = tokens.reshape(B, S, P, C).reshape(B * S, P, C)
         if pos is not None and pos.shape != (B * S, P, 2):
-            pos = pos.view(B, S, P, 2).view(B * S, P, 2)
+            pos = pos.reshape(B, S, P, 2).reshape(B * S, P, 2)
             
         frame_mask = ~mask.reshape(B*S, P) if mask is not None else None
 
@@ -133,9 +133,9 @@ class CrossViewFusion(nn.Module):
     def _process_global_attention(self, tokens, B, S, P, C, global_idx, pos=None, mask=None):
         
         if tokens.shape != (B, S * P, C):
-            tokens = tokens.view(B, S, P, C).view(B, S * P, C)
+            tokens = tokens.reshape(B, S, P, C).reshape(B, S * P, C)
         if pos is not None and pos.shape != (B, S * P, 2):
-            pos = pos.view(B, S, P, 2).view(B, S * P, 2)
+            pos = pos.reshape(B, S, P, 2).reshape(B, S * P, 2)
 
         global_mask = ~mask.reshape(B, S * P) if mask is not None else None
 
@@ -143,6 +143,42 @@ class CrossViewFusion(nn.Module):
         tokens = self.global_blocks[global_idx](tokens, pos=pos, attn_mask=global_mask)
 
         return tokens
+
+
+class SimpleCrossViewFusion(nn.Module):
+    def __init__(self, embed_dim, num_heads=8, mlp_ratio=4.0):
+        super().__init__()
+
+        self.norm1 = modeling_gemma.GemmaRMSNorm(embed_dim)
+        self.attn = nn.MultiheadAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            batch_first=True
+        )
+
+        self.norm2 = modeling_gemma.GemmaRMSNorm(embed_dim)
+
+        hidden_dim = int(embed_dim * mlp_ratio)
+
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, embed_dim),
+        )
+
+    def forward(self, x, mask=None, pos=None): # Note for simple CrossViewFusion, even though we pass pos, but we do not use it 
+        B, V, P, C = x.shape
+        x = x.reshape(B, V * P, C) 
+              
+        x_norm, _ = self.norm1(x) # [B, V*257, 1152]
+        
+        key_padding_mask = (mask == 0).view(B, V * P) if mask is not None else None
+        attn_out, _ = self.attn(x_norm, x_norm, x_norm, key_padding_mask=key_padding_mask)
+        x = x + attn_out
+        
+        x_norm, _ = self.norm2(x)
+        x = x + self.mlp(x_norm)
+        return x.reshape(B, V, P, C)
 
 
 class CamPoseEncoder(nn.Module):
@@ -223,17 +259,23 @@ class PaliGemmaWithExpertModel(nn.Module):
         self.pose_enc_type = pose_enc_type
         self.num_views = 3  # Pi-0: agent + wrist + wrist2
 
-        if self.cross_view_config.enabled:
-            self.cross_view_fusion = CrossViewFusion(
-                embed_dim=vlm_config_hf.vision_config.hidden_size, aa_order=cross_view_config.aa_order, 
-                rope_freq=cross_view_config.rope_freq, init_values=cross_view_config.init_values, num_heads=cross_view_config.num_heads
-                )
+        if self.cross_view_config.type != "none":
             self.view_embedding = nn.Embedding(
                 num_embeddings=self.num_views,
                 embedding_dim=vlm_config_hf.vision_config.hidden_size,  # must match token dim D
             )
-            self.rope = RotaryPositionEmbedding2D(frequency=cross_view_config.rope_freq) if cross_view_config.rope_freq > 0 else None
-            self.position_getter = PositionGetter() if self.rope is not None else None
+            self.position_getter = PositionGetter() if self.cross_view_config.rope_freq > 0 else None
+            
+            if self.cross_view_config.type == "standard":
+                self.cross_view_fusion = CrossViewFusion(
+                    embed_dim=vlm_config_hf.vision_config.hidden_size, aa_order=cross_view_config.aa_order, 
+                    rope_freq=cross_view_config.rope_freq, init_values=cross_view_config.init_values, num_heads=cross_view_config.num_heads
+                )
+            elif self.cross_view_config.type == "simple":
+                self.cross_view_fusion = SimpleCrossViewFusion(
+                    embed_dim=vlm_config_hf.vision_config.hidden_size, num_heads=cross_view_config.num_heads
+                )
+                
             
         if pose_enc_type != "null":
             self.cam_pose_encoder = CamPoseEncoder(vlm_config_hf.vision_config.hidden_size)
@@ -275,7 +317,7 @@ class PaliGemmaWithExpertModel(nn.Module):
         projector = self.paligemma.model.multi_modal_projector
 
         # --------- encode each image ---------
-        images = images.view(B * V, C, H, W)
+        images = images.reshape(B * V, C, H, W)
         tokens = vision_tower(images).last_hidden_state  # [B*V, P, D]
         P, D = tokens.shape[1], tokens.shape[2]
         tokens = tokens.reshape(B, V, P, D)
@@ -326,22 +368,22 @@ class PaliGemmaWithExpertModel(nn.Module):
             masks = torch.cat([pose_valid, masks], dim=-1) #(B, V, 257)
 
         # -------- cross-view fusion --------
-        if self.cross_view_config.enabled:
+        if self.cross_view_config.type != 'none':
             view_ids = torch.arange(V, device=tokens.device)
             view_embed = self.view_embedding(view_ids)  # (V,D)
             tokens = tokens + view_embed[None, :, None, :]  # [B, V, 257, 1152]
             
             pos = None
-            if self.rope is not None:
+            if self.cross_view_config.rope_freq > 0:
                 patch_size = vision_tower.config.patch_size
                 pos = self.position_getter(B * V, H // patch_size, W // patch_size, device=tokens.device)
                 
-            # do not use position embedding for camera tokens, set pos to 0 
-            num_special = 1 if self.pose_enc_type != "null" else 0
-            if num_special >= 1:
-                pos = pos + 1
-                pos_special = torch.zeros(B * V, num_special, 2).to(tokens.device).to(pos.dtype) # [B*V, 1, 2]
-                pos = torch.cat([pos_special, pos], dim=1) # (B*V, P+1, 2)
+                # do not use position embedding for camera tokens, set pos to 0 
+                num_special = 1 if self.pose_enc_type != "null" else 0
+                if num_special >= 1:
+                    pos = pos + 1
+                    pos_special = torch.zeros(B * V, num_special, 2).to(tokens.device).to(pos.dtype) # [B*V, 1, 2]
+                    pos = torch.cat([pos_special, pos], dim=1) # (B*V, P+1, 2)
 
             tokens = self.cross_view_fusion(tokens, mask=masks, pos=pos)
 

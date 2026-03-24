@@ -25,6 +25,8 @@ nohup python examples/libero/convert_libero_data_to_lerobot.py --data_dir /home/
 # go to "src/openpi/training/config.py" and change repo_id to repo_id='glbreeze/libero_cam'
 nohup python scripts/compute_norm_stats.py --config-name pi0_libero_cam > compute_stats.out 2>&1 &
 
+nohup python scripts/compute_norm_stats.py --config-name pi0_libero_cam_abs > compute_stats_abs.out 2>&1 &
+
 nohup python scripts/compute_norm_stats.py --config-name pi0_libero > compute_stats_base.out 2>&1 &
 
 # convert JAX model ckpt to PyTorch format
@@ -47,8 +49,15 @@ python scripts/train_pytorch.py pi0_libero_cam \
   --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base --batch_size 8 \
   --data.repo_id glbreeze/libero_cam \
   --model.pose_enc_type absolute_pose \
-  --model.cross_view.enabled True --model.cross_view.aa_order 'fg'
+  --model.cross_view.type standard  --model.cross_view.aa_order 'fg'
 
+
+python scripts/train_pytorch.py pi0_libero_cam \
+  --exp_name test_run \
+  --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base --batch_size 8 \
+  --data.repo_id glbreeze/libero_cam \
+  --model.pose_enc_type absolute_pose \
+  --model.cross_view.type simple   
 
 
 # Example:
