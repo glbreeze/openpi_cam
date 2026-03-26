@@ -1,0 +1,64 @@
+===== HDF5 SHARD CONVERSION ENV CHECK =====
+repo root: /scratch/yp2841/geometry-vla/openpi_cam
+raw hdf5 root: /scratch/yp2841/geometry-vla/libero_object_camera_left
+mode: all_views
+repo id: glbreeze/libero_object_tmp_shards/cam/shard_004
+shard index: 4
+num shards: 50
+hf lerobot home: /scratch/yp2841/geometry-vla
+/scratch/yp2841/geometry-vla/openpi_cam/.venv/bin/python
+Python 3.11.14
+cs657.hpc.nyu.edu
+[convert] repo_id=glbreeze/libero_object_tmp_shards/cam/shard_004 mode=all_views shard_index=4/50 selected_files=1
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_0 frames=143 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_1 frames=174 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_10 frames=147 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_11 frames=152 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_12 frames=131 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_13 frames=149 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_14 frames=158 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_15 frames=141 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_16 frames=156 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_17 frames=172 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_18 frames=138 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_19 frames=131 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_2 frames=152 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_20 frames=149 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_21 frames=131 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_22 frames=170 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_23 frames=141 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_24 frames=150 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_25 frames=174 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_26 frames=148 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_27 frames=147 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_28 frames=155 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_29 frames=145 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_3 frames=147 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_30 frames=146 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_31 frames=144 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_32 frames=152 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_33 frames=166 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_34 frames=148 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_35 frames=132 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_36 frames=146 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_37 frames=155 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_38 frames=146 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_39 frames=145 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_4 frames=167 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_40 frames=144 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_41 frames=184 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_42 frames=191 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_43 frames=146 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_44 frames=143 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_45 frames=145 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_46 frames=151 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_47 frames=148 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_48 frames=189 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_49 frames=136 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_5 frames=141 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_6 frames=144 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_7 frames=149 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_8 frames=150 task=pick up the alphabet soup and place it in the basket
+[convert] file=pick_up_the_alphabet_soup_and_place_it_in_the_basket_demo_camvar_03_t7de9b6.hdf5 episode=demo_9 frames=149 task=pick up the alphabet soup and place it in the basket
+[convert] completed repo_id=glbreeze/libero_object_tmp_shards/cam/shard_004 mode=all_views files=1 episodes=50 frames=7558
+Shard conversion completed successfully.

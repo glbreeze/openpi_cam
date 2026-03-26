@@ -1,0 +1,64 @@
+===== HDF5 SHARD CONVERSION ENV CHECK =====
+repo root: /scratch/yp2841/geometry-vla/openpi_cam
+raw hdf5 root: /scratch/yp2841/geometry-vla/libero_object_camera_left
+mode: original_only
+repo id: glbreeze/libero_object_tmp_shards/original/shard_003
+shard index: 3
+num shards: 10
+hf lerobot home: /scratch/yp2841/geometry-vla
+/scratch/yp2841/geometry-vla/openpi_cam/.venv/bin/python
+Python 3.11.14
+cs615.hpc.nyu.edu
+[convert] repo_id=glbreeze/libero_object_tmp_shards/original/shard_003 mode=original_only shard_index=3/10 selected_files=1
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_0 frames=168 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_1 frames=150 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_10 frames=152 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_11 frames=163 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_12 frames=158 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_13 frames=154 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_14 frames=160 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_15 frames=159 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_16 frames=172 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_17 frames=148 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_18 frames=161 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_19 frames=158 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_2 frames=151 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_20 frames=165 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_21 frames=224 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_22 frames=154 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_23 frames=154 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_24 frames=171 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_25 frames=150 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_26 frames=148 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_27 frames=166 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_28 frames=149 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_29 frames=153 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_3 frames=158 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_30 frames=162 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_31 frames=169 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_32 frames=161 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_33 frames=168 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_34 frames=174 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_35 frames=158 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_36 frames=162 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_37 frames=152 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_38 frames=159 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_39 frames=157 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_4 frames=149 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_40 frames=163 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_41 frames=151 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_42 frames=151 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_43 frames=169 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_44 frames=153 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_45 frames=161 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_46 frames=165 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_47 frames=162 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_48 frames=157 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_49 frames=149 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_5 frames=154 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_6 frames=162 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_7 frames=168 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_8 frames=155 task=pick up the chocolate pudding and place it in the basket
+[convert] file=pick_up_the_chocolate_pudding_and_place_it_in_the_basket_demo.hdf5 episode=demo_9 frames=145 task=pick up the chocolate pudding and place it in the basket
+[convert] completed repo_id=glbreeze/libero_object_tmp_shards/original/shard_003 mode=original_only files=1 episodes=50 frames=7982
+Shard conversion completed successfully.
