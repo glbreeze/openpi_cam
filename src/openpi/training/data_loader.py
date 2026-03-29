@@ -18,6 +18,14 @@ import openpi.transforms as _transforms
 
 T_co = TypeVar("T_co", covariant=True)
 
+def _query_hf_dataset_fixed(self, query_indices: dict[str, list[int]]) -> dict:
+    return {
+        key: torch.tensor(self.hf_dataset.select(q_idx)._data[key].to_pylist())
+        for key, q_idx in query_indices.items()
+        if key not in self.meta.video_keys
+    }
+
+lerobot_dataset.LeRobotDataset._query_hf_dataset = _query_hf_dataset_fixed
 
 class Dataset(Protocol[T_co]):
     """Interface for a dataset with random access."""
