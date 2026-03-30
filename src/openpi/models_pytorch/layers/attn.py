@@ -45,12 +45,12 @@ class Attention(nn.Module):
         if self.rope is not None:
             q = self.rope(q, pos) # [B*V, 8, 257, 144] / [B, 8, V*257, 144]
             k = self.rope(k, pos) # [B*V, 8, 257, 144] / [B, 8, V*257, 144]
-        
+
         mask = None
-        if attn_mask is not None: 
+        if attn_mask is not None:
             mask = ~ attn_mask # [B*V, 257] / [B, V*257]
             mask = mask[:, None, None, :] # [B*V, 1, 1, 257] /  [B, 1, 1, V*257]
-            
+
         if self.fused_attn:
             x = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=self.attn_drop.p if self.training else 0.0)
         else:
