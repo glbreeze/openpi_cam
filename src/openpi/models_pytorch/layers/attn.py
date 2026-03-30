@@ -44,17 +44,24 @@ class Attention(nn.Module):
             q = self.rope(q, pos)
             k = self.rope(k, pos)
 
-        mask = None
+        allowed_mask = None
+        blocked_mask = None
         if attn_mask is not None:
-            mask = ~attn_mask
-            mask = mask[:, None, None, :]
+            allowed_mask = (~attn_mask)[:, None, None, :]
+            blocked_mask = attn_mask[:, None, None, :]
 
         if self.fused_attn:
-            x = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=self.attn_drop.p if self.training else 0.0)
+            x = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=allowed_mask,
+                dropout_p=self.attn_drop.p if self.training else 0.0,
+            )
         else:
             attn = (q @ k.transpose(-2, -1)) * self.scale
-            if mask is not None:
-                attn = attn.masked_fill(mask, float("-inf"))
+            if blocked_mask is not None:
+                attn = attn.masked_fill(blocked_mask, float("-inf"))
             attn = attn.softmax(dim=-1)
             attn = self.attn_drop(attn)
             x = attn @ v
