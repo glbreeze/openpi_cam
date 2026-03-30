@@ -1,39 +1,192 @@
+from typing import Callable
 from typing import Literal
 
 import pytest
 import torch
+from torch import Tensor
 from torch import nn
 from transformers import GemmaForCausalLM
 from transformers import PaliGemmaForConditionalGeneration
 from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.gemma import modeling_gemma
+from openpi.models.cross_view_config import CrossViewFusionConfig
+from openpi.models_pytorch.layers.attn import Attention
+from openpi.models_pytorch.layers.layer_scale import LayerScale
+from openpi.models_pytorch.layers.mlp import Mlp
+from openpi.models_pytorch.layers.rope import PositionGetter
+from openpi.models_pytorch.layers.rope import RotaryPositionEmbedding2D
+
+
+class Block(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        mlp_ratio: float = 4.0,
+        qkv_bias: bool = True,
+        proj_bias: bool = True,
+        ffn_bias: bool = True,
+        drop: float = 0.0,
+        attn_drop: float = 0.0,
+        init_values=None,
+        act_layer: type[nn.Module] = nn.GELU,
+        norm_layer: type[nn.Module] = nn.LayerNorm,
+        attn_class: type[nn.Module] = Attention,
+        ffn_layer: type[nn.Module] = Mlp,
+        qk_norm: bool = False,
+        fused_attn: bool = True,
+        rope=None,
+    ) -> None:
+        super().__init__()
+
+        self.norm1 = norm_layer(dim)
+        self.attn = attn_class(
+            dim,
+            num_heads=num_heads,
+            qkv_bias=qkv_bias,
+            proj_bias=proj_bias,
+            attn_drop=attn_drop,
+            proj_drop=drop,
+            qk_norm=qk_norm,
+            fused_attn=fused_attn,
+            rope=rope,
+        )
+        self.ls1 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
+
+        self.norm2 = norm_layer(dim)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = ffn_layer(
+            in_features=dim,
+            hidden_features=mlp_hidden_dim,
+            act_layer=act_layer,
+            drop=drop,
+            bias=ffn_bias,
+        )
+        self.ls2 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
+
+    def forward(self, x: Tensor, pos=None, attn_mask=None) -> Tensor:
+        x = x + self.ls1(self.attn(self.norm1(x), pos=pos, attn_mask=attn_mask))
+        x = x + self.ls2(self.mlp(self.norm2(x)))
+        return x
 
 
 class CrossViewFusion(nn.Module):
-    def __init__(self, dim, num_heads=8, mlp_ratio=4.0):
+    def __init__(
+        self,
+        aa_order: str = "fg",
+        embed_dim: int = 1024,
+        num_heads: int = 8,
+        mlp_ratio: float = 4.0,
+        qk_norm: bool = True,
+        rope_freq: int = 100,
+        qkv_bias: bool = True,
+        proj_bias: bool = True,
+        ffn_bias: bool = True,
+        init_values: float = 0.01,
+    ):
         super().__init__()
+        self.aa_order = aa_order
+        self.rope = RotaryPositionEmbedding2D(frequency=rope_freq) if rope_freq > 0 else None
 
-        self.norm1 = modeling_gemma.GemmaRMSNorm(dim)
-        self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=num_heads, batch_first=True)
-
-        self.norm2 = modeling_gemma.GemmaRMSNorm(dim)
-
-        hidden_dim = int(dim * mlp_ratio)
-
-        self.mlp = nn.Sequential(
-            nn.Linear(dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, dim),
+        self.frame_blocks = nn.ModuleList(
+            [
+                Block(
+                    dim=embed_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=qkv_bias,
+                    proj_bias=proj_bias,
+                    ffn_bias=ffn_bias,
+                    init_values=init_values,
+                    qk_norm=qk_norm,
+                    rope=self.rope,
+                )
+                for attn_type in aa_order
+                if attn_type == "f"
+            ]
+        )
+        self.global_blocks = nn.ModuleList(
+            [
+                Block(
+                    dim=embed_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=qkv_bias,
+                    proj_bias=proj_bias,
+                    ffn_bias=ffn_bias,
+                    init_values=init_values,
+                    qk_norm=qk_norm,
+                    rope=self.rope,
+                )
+                for attn_type in aa_order
+                if attn_type == "g"
+            ]
         )
 
-    def forward(self, x, mask=None):
+    def forward(self, tokens, mask=None, pos=None):
+        bsz, num_views, num_tokens, dim = tokens.shape
+
+        frame_idx = 0
+        global_idx = 0
+        for attn_type in self.aa_order:
+            if attn_type == "f":
+                tokens = self._process_frame_attention(tokens, bsz, num_views, num_tokens, dim, frame_idx, pos=pos, mask=mask)
+                frame_idx += 1
+            elif attn_type == "g":
+                tokens = self._process_global_attention(tokens, bsz, num_views, num_tokens, dim, global_idx, pos=pos, mask=mask)
+                global_idx += 1
+            else:
+                raise ValueError(f"Unknown attention type: {attn_type}")
+
+        return tokens.reshape(bsz, num_views, num_tokens, dim)
+
+    def _process_frame_attention(self, tokens, bsz, num_views, num_tokens, dim, layer_idx, pos=None, mask=None):
+        if tokens.shape != (bsz * num_views, num_tokens, dim):
+            tokens = tokens.reshape(bsz, num_views, num_tokens, dim).reshape(bsz * num_views, num_tokens, dim)
+        if pos is not None and pos.shape != (bsz * num_views, num_tokens, 2):
+            pos = pos.reshape(bsz, num_views, num_tokens, 2).reshape(bsz * num_views, num_tokens, 2)
+
+        frame_mask = ~mask.reshape(bsz * num_views, num_tokens) if mask is not None else None
+        return self.frame_blocks[layer_idx](tokens, pos=pos, attn_mask=frame_mask)
+
+    def _process_global_attention(self, tokens, bsz, num_views, num_tokens, dim, layer_idx, pos=None, mask=None):
+        if tokens.shape != (bsz, num_views * num_tokens, dim):
+            tokens = tokens.reshape(bsz, num_views, num_tokens, dim).reshape(bsz, num_views * num_tokens, dim)
+        if pos is not None and pos.shape != (bsz, num_views * num_tokens, 2):
+            pos = pos.reshape(bsz, num_views, num_tokens, 2).reshape(bsz, num_views * num_tokens, 2)
+
+        global_mask = ~mask.reshape(bsz, num_views * num_tokens) if mask is not None else None
+        return self.global_blocks[layer_idx](tokens, pos=pos, attn_mask=global_mask)
+
+
+class SimpleCrossViewFusion(nn.Module):
+    def __init__(self, embed_dim: int, num_heads: int = 8, mlp_ratio: float = 4.0):
+        super().__init__()
+
+        self.norm1 = modeling_gemma.GemmaRMSNorm(embed_dim)
+        self.attn = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads, batch_first=True)
+
+        self.norm2 = modeling_gemma.GemmaRMSNorm(embed_dim)
+        hidden_dim = int(embed_dim * mlp_ratio)
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, embed_dim),
+        )
+
+    def forward(self, x, mask=None, pos=None):
+        del pos
+        bsz, num_views, num_tokens, dim = x.shape
+        x = x.reshape(bsz, num_views * num_tokens, dim)
+
         x_norm, _ = self.norm1(x)
-
-        attn_out, _ = self.attn(x_norm, x_norm, x_norm, key_padding_mask=(mask == 0) if mask is not None else None)
-
+        key_padding_mask = (mask == 0).reshape(bsz, num_views * num_tokens) if mask is not None else None
+        attn_out, _ = self.attn(x_norm, x_norm, x_norm, key_padding_mask=key_padding_mask)
         x = x + attn_out
+
         x_norm, _ = self.norm2(x)
-        return x + self.mlp(x_norm)
+        x = x + self.mlp(x_norm)
+        return x.reshape(bsz, num_views, num_tokens, dim)
 
 
 class CamPoseEncoder(nn.Module):
@@ -64,10 +217,10 @@ class PaliGemmaWithExpertModel(nn.Module):
         vlm_config,
         action_expert_config,
         *,
+        pose_enc_type: Literal["null", "relative_pose", "absolute_pose"] = "null",
+        cross_view_config: CrossViewFusionConfig = CrossViewFusionConfig(),
         use_adarms=None,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
-        cross_view_fusion: bool = False,
-        pose_enc_type: Literal["null", "relative_pose", "absolute_pose"] = "null",
     ):
         if use_adarms is None:
             use_adarms = [False, False]
@@ -110,16 +263,35 @@ class PaliGemmaWithExpertModel(nn.Module):
         self.gemma_expert = GemmaForCausalLM(config=action_expert_config_hf)  # action expert
         self.gemma_expert.model.embed_tokens = None
 
-        self.use_cross_view_fusion = cross_view_fusion
+        self.cross_view_config = cross_view_config
         self.pose_enc_type = pose_enc_type
         self.num_views = 3  # Pi-0: agent + wrist + wrist2
 
-        if cross_view_fusion:
-            self.cross_view_fusion = CrossViewFusion(dim=vlm_config_hf.vision_config.hidden_size)
+        if self.cross_view_config.type != "none":
             self.view_embedding = nn.Embedding(
                 num_embeddings=self.num_views,
                 embedding_dim=vlm_config_hf.vision_config.hidden_size,  # must match token dim D
             )
+            self.position_getter = PositionGetter() if self.cross_view_config.rope_freq > 0 else None
+
+            if self.cross_view_config.type == "standard":
+                self.cross_view_fusion = CrossViewFusion(
+                    embed_dim=vlm_config_hf.vision_config.hidden_size,
+                    aa_order=self.cross_view_config.aa_order,
+                    rope_freq=self.cross_view_config.rope_freq,
+                    init_values=self.cross_view_config.init_values,
+                    num_heads=self.cross_view_config.num_heads,
+                    mlp_ratio=self.cross_view_config.mlp_ratio,
+                    qk_norm=self.cross_view_config.qk_norm,
+                )
+            elif self.cross_view_config.type == "simple":
+                self.cross_view_fusion = SimpleCrossViewFusion(
+                    embed_dim=vlm_config_hf.vision_config.hidden_size,
+                    num_heads=self.cross_view_config.num_heads,
+                    mlp_ratio=self.cross_view_config.mlp_ratio,
+                )
+            else:
+                raise ValueError(f"Unsupported cross_view type: {self.cross_view_config.type}")
         if pose_enc_type != "null":
             self.cam_pose_encoder = CamPoseEncoder(vlm_config_hf.vision_config.hidden_size)
 
@@ -159,17 +331,17 @@ class PaliGemmaWithExpertModel(nn.Module):
         vision_tower = self.paligemma.model.vision_tower
         projector = self.paligemma.model.multi_modal_projector
 
-        # Use reshape to safely handle non-contiguous tensors from dataloader/stacking.
         images = images.reshape(B * V, C, H, W)
         tokens = vision_tower(images).last_hidden_state  # [B*V, P, D]
         P, D = tokens.shape[1], tokens.shape[2]
         tokens = tokens.reshape(B, V, P, D)
+        masks = img_masks[:, :, None].expand(B, V, P).clone()
 
         # -------- helpers --------
         def encode_pose(pose):
             R = pose[..., :3, :3]
             t = pose[..., :3, 3]
-            rot6d = R[..., :, :2].reshape(pose.shape[0], -1)  # (B,6)
+            rot6d = R[..., :, :2].reshape(*R.shape[:-2], -1)  # (B,6)
             return torch.cat([t, rot6d], dim=-1).to(device=tokens.device, dtype=tokens.dtype)  # (B,9)
 
         def make_null_token() -> torch.Tensor:
@@ -200,31 +372,31 @@ class PaliGemmaWithExpertModel(nn.Module):
                         cam_tokens.append(cam_token)
                     else:
                         cam_tokens.append(make_null_token())
-            cam_tokens = torch.cat(cam_tokens, dim=1)
-            cam_tokens = cam_tokens.unsqueeze(2)  # (B,V,1,D)
+            cam_tokens = torch.stack(cam_tokens, dim=1)  # (B,V,1,D)
             tokens = torch.cat([cam_tokens, tokens], dim=2)  # [B, V, P+1, D]
             P = P + 1
 
             # ------ update the image masks ------
-            masks = img_masks[:, :, None].expand(B, V, P)
-
-            # -------- add view embedding --------
-            view_ids = torch.arange(V, device=tokens.device)
-            view_embed = self.view_embedding(view_ids)  # (V,D)
-            tokens = tokens + view_embed[None, :, None, :]  # [B, V, 257, 1152]
-        else:
-            # Keep masks consistent when no camera token is injected.
-            masks = img_masks[:, :, None].expand(B, V, P)
+            pose_valid = img_masks[:, :, None]
+            masks = torch.cat([pose_valid, masks], dim=-1)
 
         # -------- cross-view fusion --------
-        if self.use_cross_view_fusion:
-            tokens = tokens.reshape(B, V * P, D)
+        if self.cross_view_config.type != "none":
+            view_ids = torch.arange(V, device=tokens.device)
+            view_embed = self.view_embedding(view_ids)
+            tokens = tokens + view_embed[None, :, None, :]
 
-            img_masks = masks.reshape(B, V * P)
+            pos = None
+            if self.cross_view_config.rope_freq > 0:
+                patch_size = vision_tower.config.patch_size
+                pos = self.position_getter(B * V, H // patch_size, W // patch_size, device=tokens.device)
+                num_special = 1 if self.pose_enc_type != "null" else 0
+                if num_special >= 1:
+                    pos = pos + 1
+                    pos_special = torch.zeros(B * V, num_special, 2, device=tokens.device, dtype=pos.dtype)
+                    pos = torch.cat([pos_special, pos], dim=1)
 
-            tokens = self.cross_view_fusion(tokens, mask=img_masks)
-
-            tokens = tokens.reshape(B, V, P, D)
+            tokens = self.cross_view_fusion(tokens, mask=masks, pos=pos)
 
         # -------- projector --------
         tokens = tokens.reshape(B * V, P, D)

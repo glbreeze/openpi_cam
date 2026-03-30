@@ -43,7 +43,7 @@ python scripts/train_pytorch.py pi0_libero_cam \
   --exp_name test_run \
   --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base --batch_size 8 \
   --data.repo_id glbreeze/libero_cam \
-  --model.pose_enc_type absolute_pose --model.cross_view_fusion
+  --model.pose_enc_type absolute_pose --model.cross_view.type simple
 
 
 

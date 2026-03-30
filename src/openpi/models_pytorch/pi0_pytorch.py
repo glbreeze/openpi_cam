@@ -86,9 +86,9 @@ class PI0Pytorch(nn.Module):
         super().__init__()
         self.config = config
         self.pi05 = config.pi05
-        # ------- new config -------
-        self.cross_view_fusion = config.cross_view_fusion
         self.pose_enc_type = config.pose_enc_type
+        self.cross_view_config = config.get_effective_cross_view()
+        self.cross_view_fusion = self.cross_view_config.type != "none"
 
         paligemma_config = _gemma.get_config(config.paligemma_variant)
         action_expert_config = _gemma.get_config(config.action_expert_variant)
@@ -98,8 +98,8 @@ class PI0Pytorch(nn.Module):
             action_expert_config,
             use_adarms=[False, True] if self.pi05 else [False, False],
             precision=config.dtype,
-            cross_view_fusion=config.cross_view_fusion,
             pose_enc_type=config.pose_enc_type,
+            cross_view_config=self.cross_view_config,
         )
 
         self.action_in_proj = nn.Linear(32, action_expert_config.width)

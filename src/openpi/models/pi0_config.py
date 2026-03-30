@@ -7,6 +7,7 @@ import jax.numpy as jnp
 from typing_extensions import override
 
 from openpi.models import model as _model
+from openpi.models.cross_view_config import CrossViewFusionConfig
 import openpi.models.gemma as _gemma
 from openpi.shared import array_typing as at
 import openpi.shared.nnx_utils as nnx_utils
@@ -22,6 +23,7 @@ class Pi0Config(_model.BaseModelConfig):
     action_expert_variant: _gemma.Variant = "gemma_300m"
 
     # ------ NEW CONFIGS ------
+    cross_view: CrossViewFusionConfig = dataclasses.field(default_factory=CrossViewFusionConfig)
     cross_view_fusion: bool = False
     pose_enc_type: str = "null"  # "null" | "relative_pose" | "absolute_pose"
 
@@ -41,6 +43,13 @@ class Pi0Config(_model.BaseModelConfig):
             object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)
         if self.discrete_state_input is None:
             object.__setattr__(self, "discrete_state_input", self.pi05)
+
+    def get_effective_cross_view(self) -> CrossViewFusionConfig:
+        if self.cross_view.type != "none":
+            return self.cross_view
+        if self.cross_view_fusion:
+            return dataclasses.replace(self.cross_view, type="simple")
+        return self.cross_view
 
     @property
     @override

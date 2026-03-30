@@ -182,7 +182,7 @@ TRAIN_ARGS=(
 if [[ "${USE_CAM}" == "true" ]]; then
   TRAIN_ARGS+=(
     --model.pose_enc_type absolute_pose
-    --model.cross_view_fusion
+    --model.cross_view.type simple
   )
 fi
 

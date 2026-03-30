@@ -14,6 +14,7 @@ import flax.nnx as nnx
 from typing_extensions import override
 import tyro
 
+import openpi.models.cross_view_config as cross_view_config
 import openpi.models.model as _model
 import openpi.models.pi0_config as pi0_config
 import openpi.models.pi0_fast as pi0_fast
@@ -676,7 +677,10 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi0_libero_cam_pytorch_full_finetune",
-        model=pi0_config.Pi0Config(pose_enc_type="absolute_pose", cross_view_fusion=True),
+        model=pi0_config.Pi0Config(
+            pose_enc_type="absolute_pose",
+            cross_view=cross_view_config.CrossViewFusionConfig(type="simple"),
+        ),
         data=LeRobotLiberoDataConfig(
             repo_id=f"{HF_NAME}/libero_cam",
             assets=AssetsConfig(
