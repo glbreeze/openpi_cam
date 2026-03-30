@@ -1,0 +1,2 @@
+Starting policy server for checkpoint /scratch/yp2841/geometry-vla/openpi_cam/checkpoints/pi0_libero_pytorch_full_finetune/pi0_libero_object_4690327/5000 on port 18000
+Server failed to start on port 18000, killing PID 2673007

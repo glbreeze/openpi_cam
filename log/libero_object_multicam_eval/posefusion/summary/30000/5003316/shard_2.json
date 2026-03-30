@@ -1,0 +1,317 @@
+{
+  "model_name": "posefusion",
+  "task_suite_name": "libero_object",
+  "task_range": [
+    5,
+    7
+  ],
+  "num_trials_per_task": 50,
+  "camera_variation_config": "/scratch/yp2841/geometry-vla/LIBERO-Camera/configs/camera_variation/libero_object_left_variation.json",
+  "camera_variation_count": 4,
+  "camera_variation_include_original": true,
+  "total_episodes": 500,
+  "total_successes": 340,
+  "total_success_rate": 0.68,
+  "records": [
+    {
+      "task_id": 5,
+      "task_description": "pick up the tomato sauce and place it in the basket",
+      "camera_label": "original",
+      "variation_id": null,
+      "episodes": 50,
+      "successes": 29,
+      "success_rate": 0.58,
+      "camera_pos": [
+        0.896577,
+        5.21618e-07,
+        0.65
+      ],
+      "camera_quat": [
+        0.6182167547735541,
+        0.3432308638514983,
+        0.3432308638514983,
+        0.6182177547731574
+      ],
+      "delta_pos": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "task_id": 5,
+      "task_description": "pick up the tomato sauce and place it in the basket",
+      "camera_label": "camvar_00",
+      "variation_id": 0,
+      "episodes": 50,
+      "successes": 41,
+      "success_rate": 0.82,
+      "camera_pos": [
+        0.8464182094952135,
+        -0.21327951444928606,
+        0.9423491601173988
+      ],
+      "camera_quat": [
+        0.6746967333079207,
+        0.38503397569472514,
+        0.3121131736351401,
+        0.546917290335326
+      ],
+      "delta_pos": [
+        -0.050158790504786444,
+        -0.21328003606728604,
+        0.29234916011739875
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        14.0,
+        -12.0
+      ]
+    },
+    {
+      "task_id": 5,
+      "task_description": "pick up the tomato sauce and place it in the basket",
+      "camera_label": "camvar_01",
+      "variation_id": 1,
+      "episodes": 50,
+      "successes": 40,
+      "success_rate": 0.8,
+      "camera_pos": [
+        0.852058796098695,
+        -0.4490894369377797,
+        0.9377339137519357
+      ],
+      "camera_quat": [
+        0.7208058566790453,
+        0.4281944425555158,
+        0.2783771321223197,
+        0.46860922809214006
+      ],
+      "delta_pos": [
+        -0.04451820390130501,
+        -0.4490899585557797,
+        0.2877339137519357
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        12.0,
+        -24.0
+      ]
+    },
+    {
+      "task_id": 5,
+      "task_description": "pick up the tomato sauce and place it in the basket",
+      "camera_label": "camvar_02",
+      "variation_id": 2,
+      "episodes": 50,
+      "successes": 39,
+      "success_rate": 0.78,
+      "camera_pos": [
+        0.7851389006399252,
+        -0.6840909277372308,
+        0.918508200054869
+      ],
+      "camera_quat": [
+        0.7577836466992516,
+        0.46824354637989984,
+        0.23887690699822564,
+        0.3865873114468703
+      ],
+      "delta_pos": [
+        -0.11143809936007476,
+        -0.6840914493552308,
+        0.268508200054869
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        10.0,
+        -36.0
+      ]
+    },
+    {
+      "task_id": 5,
+      "task_description": "pick up the tomato sauce and place it in the basket",
+      "camera_label": "camvar_03",
+      "variation_id": 3,
+      "episodes": 50,
+      "successes": 43,
+      "success_rate": 0.86,
+      "camera_pos": [
+        0.6758515057339345,
+        -0.9241280253349045,
+        0.9049715674474558
+      ],
+      "camera_quat": [
+        0.7853578832803304,
+        0.5044311075170295,
+        0.19392232204858503,
+        0.30192115849980905
+      ],
+      "delta_pos": [
+        -0.22072549426606547,
+        -0.9241285469529045,
+        0.25497156744745575
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        8.0,
+        -48.0
+      ]
+    },
+    {
+      "task_id": 6,
+      "task_description": "pick up the butter and place it in the basket",
+      "camera_label": "original",
+      "variation_id": null,
+      "episodes": 50,
+      "successes": 14,
+      "success_rate": 0.28,
+      "camera_pos": [
+        0.896577,
+        5.21618e-07,
+        0.65
+      ],
+      "camera_quat": [
+        0.6182167547735541,
+        0.3432308638514983,
+        0.3432308638514983,
+        0.6182177547731574
+      ],
+      "delta_pos": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "task_id": 6,
+      "task_description": "pick up the butter and place it in the basket",
+      "camera_label": "camvar_00",
+      "variation_id": 0,
+      "episodes": 50,
+      "successes": 32,
+      "success_rate": 0.64,
+      "camera_pos": [
+        0.8456363542474554,
+        -0.21246712556051456,
+        0.9417677072495667
+      ],
+      "camera_quat": [
+        0.6754279741040905,
+        0.3839926777663296,
+        0.3111478140764104,
+        0.5472967321435049
+      ],
+      "delta_pos": [
+        -0.05094064575254453,
+        -0.21246764717851455,
+        0.2917677072495667
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        14.0,
+        -12.0
+      ]
+    },
+    {
+      "task_id": 6,
+      "task_description": "pick up the butter and place it in the basket",
+      "camera_label": "camvar_01",
+      "variation_id": 1,
+      "episodes": 50,
+      "successes": 33,
+      "success_rate": 0.66,
+      "camera_pos": [
+        0.8513120476861666,
+        -0.4474661872507412,
+        0.9374125489034286
+      ],
+      "camera_quat": [
+        0.7215924720083563,
+        0.42707149871560107,
+        0.27753128773504876,
+        0.4689249659101181
+      ],
+      "delta_pos": [
+        -0.04526495231383332,
+        -0.44746670886874124,
+        0.2874125489034286
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        12.0,
+        -24.0
+      ]
+    },
+    {
+      "task_id": 6,
+      "task_description": "pick up the butter and place it in the basket",
+      "camera_label": "camvar_02",
+      "variation_id": 2,
+      "episodes": 50,
+      "successes": 35,
+      "success_rate": 0.7,
+      "camera_pos": [
+        0.7846751738969002,
+        -0.6816978502078461,
+        0.9184135593413938
+      ],
+      "camera_quat": [
+        0.7586198660440455,
+        0.4670527520059959,
+        0.2381572312689047,
+        0.3868316932223491
+      ],
+      "delta_pos": [
+        -0.11190182610309973,
+        -0.6816983718258461,
+        0.26841355934139377
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        10.0,
+        -36.0
+      ]
+    },
+    {
+      "task_id": 6,
+      "task_description": "pick up the butter and place it in the basket",
+      "camera_label": "camvar_03",
+      "variation_id": 3,
+      "episodes": 50,
+      "successes": 34,
+      "success_rate": 0.68,
+      "camera_pos": [
+        0.6757843494430924,
+        -0.9209928766555524,
+        0.9051576332584865
+      ],
+      "camera_quat": [
+        0.786236917291676,
+        0.5031867615801886,
+        0.19333386692927157,
+        0.30208708803306955
+      ],
+      "delta_pos": [
+        -0.22079265055690755,
+        -0.9209933982735524,
+        0.2551576332584865
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        8.0,
+        -48.0
+      ]
+    }
+  ]
+}

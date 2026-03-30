@@ -51,6 +51,7 @@ fi
 GEO_ROOT=${GEO_ROOT:-$(cd -- "${REPO_ROOT}/.." && pwd)}
 
 USE_CAM=${USE_CAM:-false}
+RESUME=${RESUME:-false}
 WANDB_ENABLED=${WANDB_ENABLED:-true}
 WANDB_PROJECT=${WANDB_PROJECT:-openpi_cam_libero_object}
 NUM_GPUS=${NUM_GPUS:-${SLURM_GPUS_ON_NODE:-4}}
@@ -156,6 +157,11 @@ if [[ "${WANDB_ENABLED}" == "true" ]]; then
   WAND_ARG="--wandb-enabled"
 fi
 
+RESUME_OR_OVERWRITE_ARG="--overwrite"
+if [[ "${RESUME}" == "true" ]]; then
+  RESUME_OR_OVERWRITE_ARG="--resume"
+fi
+
 TRAIN_ARGS=(
   "${CONFIG_NAME}"
   --exp-name="${EXP_NAME}"
@@ -165,7 +171,7 @@ TRAIN_ARGS=(
   --num-workers="${NUM_WORKERS}"
   --num-train-steps="${NUM_TRAIN_STEPS}"
   --save-interval="${SAVE_INTERVAL}"
-  --overwrite
+  "${RESUME_OR_OVERWRITE_ARG}"
   --pytorch_weight_path "${BASE_MODEL_DIR}"
   --data.repo_id "${DATASET_REPO_ID}"
   --data.assets.assets_dir "${NORM_STATS_ROOT}"
@@ -183,6 +189,7 @@ fi
 echo "===== TRAIN ENV CHECK ====="
 echo "repo root: ${REPO_ROOT}"
 echo "use_cam: ${USE_CAM}"
+echo "resume: ${RESUME}"
 echo "config: ${CONFIG_NAME}"
 echo "exp: ${EXP_NAME}"
 echo "dataset: ${DATASET_DIR}"

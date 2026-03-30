@@ -1,0 +1,107 @@
+{
+  "model_name": "current_camera04_pi0",
+  "task_suite_name": "libero_object",
+  "task_range": [
+    2,
+    5
+  ],
+  "num_trials_per_task": 50,
+  "camera_variation_config": "/scratch/yp2841/geometry-vla/LIBERO-Camera/configs/camera_variation/libero_object_left_camvar_04_only.json",
+  "camera_variation_count": 1,
+  "camera_variation_include_original": false,
+  "total_episodes": 150,
+  "total_successes": 107,
+  "total_success_rate": 0.7133333333333334,
+  "records": [
+    {
+      "task_id": 2,
+      "task_description": "pick up the salad dressing and place it in the basket",
+      "camera_label": "camvar_00",
+      "variation_id": 0,
+      "episodes": 50,
+      "successes": 45,
+      "success_rate": 0.9,
+      "camera_pos": [
+        0.5014067895377268,
+        -1.134322240664686,
+        0.8843640776637731
+      ],
+      "camera_quat": [
+        0.8038351348817313,
+        0.5370235349764789,
+        0.1421228504693067,
+        0.21273432770832856
+      ],
+      "delta_pos": [
+        -0.3951702104622732,
+        -1.134322762282686,
+        0.2343640776637731
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        6.0,
+        -60.0
+      ]
+    },
+    {
+      "task_id": 3,
+      "task_description": "pick up the bbq sauce and place it in the basket",
+      "camera_label": "camvar_00",
+      "variation_id": 0,
+      "episodes": 50,
+      "successes": 31,
+      "success_rate": 0.62,
+      "camera_pos": [
+        0.4977218895041452,
+        -1.1535254499333218,
+        0.8908627529245652
+      ],
+      "camera_quat": [
+        0.8056927961904164,
+        0.5333122941134444,
+        0.1422706086822962,
+        0.2149329872762484
+      ],
+      "delta_pos": [
+        -0.39885511049585476,
+        -1.1535259715513217,
+        0.24086275292456516
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        6.0,
+        -60.0
+      ]
+    },
+    {
+      "task_id": 4,
+      "task_description": "pick up the ketchup and place it in the basket",
+      "camera_label": "camvar_00",
+      "variation_id": 0,
+      "episodes": 50,
+      "successes": 31,
+      "success_rate": 0.62,
+      "camera_pos": [
+        0.49709909686685966,
+        -1.134031355723088,
+        0.8832304036078896
+      ],
+      "camera_quat": [
+        0.8032140893411369,
+        0.538834380318122,
+        0.14149136856023165,
+        0.2109142714327937
+      ],
+      "delta_pos": [
+        -0.3994779031331403,
+        -1.134031877341088,
+        0.2332304036078896
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        6.0,
+        -60.0
+      ]
+    }
+  ]
+}

@@ -39,6 +39,7 @@ THIRD_PARTY_LIBERO_ROOT = THIRD_PARTY_LIBERO / "libero" / "libero"
 _TASK_MAPPING = None
 _LIBERO_UTILS = None
 _ROBOSUITE_ASSETS_ROOT = None
+_CAMVAR_PATH_RE = re.compile(r"_camvar_(?P<id>\d+)(?:_[A-Za-z0-9-]+)?\.hdf5$")
 
 
 def _ensure_libero_setup():
@@ -260,14 +261,42 @@ def _iter_hdf5_files(dataset_root: pathlib.Path) -> list[pathlib.Path]:
     return sorted(dataset_root.rglob("*.hdf5"))
 
 
+def _camera_label_for_file(path: pathlib.Path) -> str:
+    match = _CAMVAR_PATH_RE.search(path.name)
+    if not match:
+        return "original"
+    return f"camvar_{int(match.group('id')):02d}"
+
+
+def _parse_camera_label_list(spec: str | None) -> set[str] | None:
+    if spec is None:
+        return None
+    labels = {item.strip() for item in re.split(r"[,+;]", spec) if item.strip()}
+    if not labels:
+        raise ValueError("camera label filter must contain at least one non-empty label")
+    return labels
+
+
 def _select_hdf5_files(
     dataset_root: pathlib.Path,
     mode: Literal["original_only", "all_views"],
+    *,
+    include_camera_labels: set[str] | None = None,
+    exclude_camera_labels: set[str] | None = None,
 ) -> list[pathlib.Path]:
     files = _iter_hdf5_files(dataset_root)
     if mode == "original_only":
-        return [path for path in files if "_camvar_" not in path.name]
-    return files
+        selected = [path for path in files if "_camvar_" not in path.name]
+    else:
+        selected = files
+
+    if include_camera_labels is not None:
+        selected = [path for path in selected if _camera_label_for_file(path) in include_camera_labels]
+
+    if exclude_camera_labels is not None:
+        selected = [path for path in selected if _camera_label_for_file(path) not in exclude_camera_labels]
+
+    return selected
 
 
 def _select_shard_files(
@@ -360,6 +389,8 @@ def main(
     *,
     mode: Literal["original_only", "all_views"] = "all_views",
     repo_id: str | None = None,
+    include_camera_labels: str | None = None,
+    exclude_camera_labels: str | None = None,
     max_files: int = 0,
     max_episodes_per_file: int = 0,
     fps: int = 10,
@@ -373,7 +404,19 @@ def main(
     if not dataset_root_path.exists():
         raise FileNotFoundError(f"Dataset root does not exist: {dataset_root_path}")
 
-    selected_files = _select_hdf5_files(dataset_root_path, mode)
+    include_label_set = _parse_camera_label_list(include_camera_labels)
+    exclude_label_set = _parse_camera_label_list(exclude_camera_labels)
+    if include_label_set is not None and exclude_label_set is not None:
+        overlap = include_label_set & exclude_label_set
+        if overlap:
+            raise ValueError(f"camera label filters overlap: {sorted(overlap)}")
+
+    selected_files = _select_hdf5_files(
+        dataset_root_path,
+        mode,
+        include_camera_labels=include_label_set,
+        exclude_camera_labels=exclude_label_set,
+    )
     selected_files = _select_shard_files(selected_files, num_shards=num_shards, shard_index=shard_index)
     if max_files > 0:
         selected_files = selected_files[:max_files]
@@ -396,7 +439,8 @@ def main(
 
     print(
         f"[convert] repo_id={output_repo_id} mode={mode} shard_index={shard_index}/{num_shards} "
-        f"selected_files={len(selected_files)}"
+        f"selected_files={len(selected_files)} include_camera_labels={sorted(include_label_set) if include_label_set else None} "
+        f"exclude_camera_labels={sorted(exclude_label_set) if exclude_label_set else None}"
     )
 
     for hdf5_path in selected_files:

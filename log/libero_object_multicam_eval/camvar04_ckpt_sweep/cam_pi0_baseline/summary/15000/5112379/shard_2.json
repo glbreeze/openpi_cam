@@ -1,0 +1,77 @@
+{
+  "model_name": "cam_pi0_baseline_cam4",
+  "task_suite_name": "libero_object",
+  "task_range": [
+    5,
+    7
+  ],
+  "num_trials_per_task": 50,
+  "camera_variation_config": "/scratch/yp2841/geometry-vla/LIBERO-Camera/configs/camera_variation/libero_object_left_camvar_04_only.json",
+  "camera_variation_count": 1,
+  "camera_variation_include_original": false,
+  "total_episodes": 100,
+  "total_successes": 77,
+  "total_success_rate": 0.77,
+  "records": [
+    {
+      "task_id": 5,
+      "task_description": "pick up the tomato sauce and place it in the basket",
+      "camera_label": "camvar_00",
+      "variation_id": 0,
+      "episodes": 50,
+      "successes": 32,
+      "success_rate": 0.64,
+      "camera_pos": [
+        0.5057956824280996,
+        -1.1463364768637925,
+        0.8865557941572397
+      ],
+      "camera_quat": [
+        0.8033821228404678,
+        0.536040776386462,
+        0.14391892181753227,
+        0.2156960701872465
+      ],
+      "delta_pos": [
+        -0.3907813175719004,
+        -1.1463369984817924,
+        0.2365557941572397
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        6.0,
+        -60.0
+      ]
+    },
+    {
+      "task_id": 6,
+      "task_description": "pick up the butter and place it in the basket",
+      "camera_label": "camvar_00",
+      "variation_id": 0,
+      "episodes": 50,
+      "successes": 45,
+      "success_rate": 0.9,
+      "camera_pos": [
+        0.5062922642008936,
+        -1.142552794960666,
+        0.8870331237262488
+      ],
+      "camera_quat": [
+        0.8042962213481782,
+        0.5347574945661805,
+        0.14346510561641823,
+        0.2157771391987892
+      ],
+      "delta_pos": [
+        -0.3902847357991064,
+        -1.1425533165786659,
+        0.23703312372624874
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        6.0,
+        -60.0
+      ]
+    }
+  ]
+}

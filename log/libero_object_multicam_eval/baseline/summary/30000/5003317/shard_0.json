@@ -1,0 +1,317 @@
+{
+  "model_name": "baseline",
+  "task_suite_name": "libero_object",
+  "task_range": [
+    0,
+    2
+  ],
+  "num_trials_per_task": 50,
+  "camera_variation_config": "/scratch/yp2841/geometry-vla/LIBERO-Camera/configs/camera_variation/libero_object_left_variation.json",
+  "camera_variation_count": 4,
+  "camera_variation_include_original": true,
+  "total_episodes": 500,
+  "total_successes": 97,
+  "total_success_rate": 0.194,
+  "records": [
+    {
+      "task_id": 0,
+      "task_description": "pick up the alphabet soup and place it in the basket",
+      "camera_label": "original",
+      "variation_id": null,
+      "episodes": 50,
+      "successes": 37,
+      "success_rate": 0.74,
+      "camera_pos": [
+        0.896577,
+        5.21618e-07,
+        0.65
+      ],
+      "camera_quat": [
+        0.6182167547735541,
+        0.3432308638514983,
+        0.3432308638514983,
+        0.6182177547731574
+      ],
+      "delta_pos": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "task_id": 0,
+      "task_description": "pick up the alphabet soup and place it in the basket",
+      "camera_label": "camvar_00",
+      "variation_id": 0,
+      "episodes": 50,
+      "successes": 20,
+      "success_rate": 0.4,
+      "camera_pos": [
+        0.8441212683308538,
+        -0.21275218792107192,
+        0.9428337794166142
+      ],
+      "camera_quat": [
+        0.675065777109127,
+        0.3796748011103482,
+        0.31008923713203146,
+        0.5513419147795158
+      ],
+      "delta_pos": [
+        -0.05245573166914619,
+        -0.2127527095390719,
+        0.29283377941661415
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        14.0,
+        -12.0
+      ]
+    },
+    {
+      "task_id": 0,
+      "task_description": "pick up the alphabet soup and place it in the basket",
+      "camera_label": "camvar_01",
+      "variation_id": 1,
+      "episodes": 50,
+      "successes": 3,
+      "success_rate": 0.06,
+      "camera_pos": [
+        0.8520597729639311,
+        -0.447753436066631,
+        0.9391936255856743
+      ],
+      "camera_quat": [
+        0.7217319620096254,
+        0.4226683882396252,
+        0.2770008145727064,
+        0.47299572653747224
+      ],
+      "delta_pos": [
+        -0.04451722703606886,
+        -0.447753957684631,
+        0.2891936255856743
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        12.0,
+        -24.0
+      ]
+    },
+    {
+      "task_id": 0,
+      "task_description": "pick up the alphabet soup and place it in the basket",
+      "camera_label": "camvar_02",
+      "variation_id": 2,
+      "episodes": 50,
+      "successes": 0,
+      "success_rate": 0.0,
+      "camera_pos": [
+        0.7876468354057776,
+        -0.6827410046964907,
+        0.9206596342954998
+      ],
+      "camera_quat": [
+        0.7592614079586361,
+        0.4626288353517538,
+        0.2381603256298971,
+        0.3908661335823442
+      ],
+      "delta_pos": [
+        -0.10893016459422233,
+        -0.6827415263144907,
+        0.2706596342954998
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        10.0,
+        -36.0
+      ]
+    },
+    {
+      "task_id": 0,
+      "task_description": "pick up the alphabet soup and place it in the basket",
+      "camera_label": "camvar_03",
+      "variation_id": 3,
+      "episodes": 50,
+      "successes": 0,
+      "success_rate": 0.0,
+      "camera_pos": [
+        0.680927690507951,
+        -0.9233114886348021,
+        0.9080834933235571
+      ],
+      "camera_quat": [
+        0.787373276612849,
+        0.4988065681331138,
+        0.1938681532782483,
+        0.30602364289004397
+      ],
+      "delta_pos": [
+        -0.21564930949204897,
+        -0.9233120102528021,
+        0.25808349332355707
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        8.0,
+        -48.0
+      ]
+    },
+    {
+      "task_id": 1,
+      "task_description": "pick up the cream cheese and place it in the basket",
+      "camera_label": "original",
+      "variation_id": null,
+      "episodes": 50,
+      "successes": 37,
+      "success_rate": 0.74,
+      "camera_pos": [
+        0.896577,
+        5.21618e-07,
+        0.65
+      ],
+      "camera_quat": [
+        0.6182167547735541,
+        0.3432308638514983,
+        0.3432308638514983,
+        0.6182177547731574
+      ],
+      "delta_pos": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "task_id": 1,
+      "task_description": "pick up the cream cheese and place it in the basket",
+      "camera_label": "camvar_00",
+      "variation_id": 0,
+      "episodes": 50,
+      "successes": 0,
+      "success_rate": 0.0,
+      "camera_pos": [
+        0.8520942401541969,
+        -0.20945479217717922,
+        0.9360196012976276
+      ],
+      "camera_quat": [
+        0.6728410661081929,
+        0.38915583122495884,
+        0.3149994483749955,
+        0.5446264649330312
+      ],
+      "delta_pos": [
+        -0.04448275984580308,
+        -0.2094553137951792,
+        0.2860196012976276
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        14.0,
+        -12.0
+      ]
+    },
+    {
+      "task_id": 1,
+      "task_description": "pick up the cream cheese and place it in the basket",
+      "camera_label": "camvar_01",
+      "variation_id": 1,
+      "episodes": 50,
+      "successes": 0,
+      "success_rate": 0.0,
+      "camera_pos": [
+        0.8567020581557725,
+        -0.4408481236854831,
+        0.930583584755005
+      ],
+      "camera_quat": [
+        0.7186444085315525,
+        0.43255835816692495,
+        0.28077999660290476,
+        0.4664826624580405
+      ],
+      "delta_pos": [
+        -0.03987494184422746,
+        -0.4408486453034831,
+        0.280583584755005
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        12.0,
+        -24.0
+      ]
+    },
+    {
+      "task_id": 1,
+      "task_description": "pick up the cream cheese and place it in the basket",
+      "camera_label": "camvar_02",
+      "variation_id": 2,
+      "episodes": 50,
+      "successes": 0,
+      "success_rate": 0.0,
+      "camera_pos": [
+        0.7901573172305797,
+        -0.6710987849112143,
+        0.9111251776375298
+      ],
+      "camera_quat": [
+        0.7553319867108093,
+        0.47279262921736737,
+        0.24077719315124865,
+        0.38466487085180706
+      ],
+      "delta_pos": [
+        -0.10641968276942027,
+        -0.6710993065292143,
+        0.26112517763752974
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        10.0,
+        -36.0
+      ]
+    },
+    {
+      "task_id": 1,
+      "task_description": "pick up the cream cheese and place it in the basket",
+      "camera_label": "camvar_03",
+      "variation_id": 3,
+      "episodes": 50,
+      "successes": 0,
+      "success_rate": 0.0,
+      "camera_pos": [
+        0.682129689480818,
+        -0.9059693050393949,
+        0.8969830863170987
+      ],
+      "camera_quat": [
+        0.7826366817768533,
+        0.5091071246595024,
+        0.19530757926204734,
+        0.3002410855313601
+      ],
+      "delta_pos": [
+        -0.21444731051918198,
+        -0.9059698266573949,
+        0.24698308631709864
+      ],
+      "delta_rpy_deg": [
+        0.0,
+        8.0,
+        -48.0
+      ]
+    }
+  ]
+}
