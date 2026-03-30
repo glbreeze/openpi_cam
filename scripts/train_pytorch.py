@@ -394,6 +394,13 @@ def train_loop(config: _config.TrainConfig):
             paligemma_variant=getattr(config.model, "paligemma_variant", "gemma_2b"),
             action_expert_variant=getattr(config.model, "action_expert_variant", "gemma_300m"),
             pi05=getattr(config.model, "pi05", False),
+            pose_enc_type=getattr(config.model, "pose_enc_type", "null"),
+            cross_view=getattr(
+                config.model,
+                "cross_view",
+                openpi.models.pi0_config.CrossViewFusionConfig(),
+            ),
+            cross_view_fusion=getattr(config.model, "cross_view_fusion", None),
         )
     else:
         model_cfg = config.model

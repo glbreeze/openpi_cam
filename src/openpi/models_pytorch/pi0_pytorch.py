@@ -87,7 +87,6 @@ class PI0Pytorch(nn.Module):
         self.config = config
         self.pi05 = config.pi05
         # ------- new config -------
-        self.cross_view_fusion = config.cross_view_fusion
         self.pose_enc_type = config.pose_enc_type
 
         paligemma_config = _gemma.get_config(config.paligemma_variant)
@@ -98,8 +97,8 @@ class PI0Pytorch(nn.Module):
             action_expert_config,
             use_adarms=[False, True] if self.pi05 else [False, False],
             precision=config.dtype,
-            cross_view_fusion=config.cross_view_fusion,
             pose_enc_type=config.pose_enc_type,
+            cross_view_config=config.cross_view,
         )
 
         self.action_in_proj = nn.Linear(32, action_expert_config.width)
@@ -208,7 +207,6 @@ class PI0Pytorch(nn.Module):
             cam_pos = {"base": obs.agent_extrinsic, "left_wrist": obs.wrist_extrinsic, "right_wrist": None}
         else:
             cam_pos = None
-
         # -------------- Process images (vision_tower + multi_modal_projector) --------------
         def image_embed_func(images, img_masks, cam_pos):
             return self.paligemma_with_expert.embed_image(images, img_masks, cam_pos=cam_pos, cam_keys=cam_keys)
@@ -410,9 +408,7 @@ class PI0Pytorch(nn.Module):
 
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, observation
-        )
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 

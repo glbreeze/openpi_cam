@@ -10,6 +10,7 @@ from openpi.models import model as _model
 import openpi.models.gemma as _gemma
 from openpi.shared import array_typing as at
 import openpi.shared.nnx_utils as nnx_utils
+from openpi.models.cross_view_config import CrossViewFusionConfig
 
 if TYPE_CHECKING:
     from openpi.models.pi0 import Pi0
@@ -22,7 +23,10 @@ class Pi0Config(_model.BaseModelConfig):
     action_expert_variant: _gemma.Variant = "gemma_300m"
 
     # ------ NEW CONFIGS ------
-    cross_view_fusion: bool = False
+    cross_view: CrossViewFusionConfig = CrossViewFusionConfig()
+    # Backward-compatibility shim for older training scripts and sbatch files.
+    # `True` maps to the newer `cross_view.type="simple"` behavior.
+    cross_view_fusion: bool | None = None
     pose_enc_type: str = "null"  # "null" | "relative_pose" | "absolute_pose"
 
     # Set the model specific defaults.
@@ -41,6 +45,11 @@ class Pi0Config(_model.BaseModelConfig):
             object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)
         if self.discrete_state_input is None:
             object.__setattr__(self, "discrete_state_input", self.pi05)
+        if self.cross_view_fusion is not None:
+            if self.cross_view_fusion:
+                object.__setattr__(self, "cross_view", dataclasses.replace(self.cross_view, type="simple"))
+            elif self.cross_view.type == "simple":
+                object.__setattr__(self, "cross_view", dataclasses.replace(self.cross_view, type="none"))
 
     @property
     @override

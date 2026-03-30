@@ -85,11 +85,13 @@ def main(
     raw_dataset_names: str | None = None,
     include_cam_extrinsics: bool = False,
     transform_state_actions_to_camera: bool = False,
+    trans_base: bool = False,
     *,
     push_to_hub: bool = False,
 ):
     raw_dataset_names = _resolve_raw_dataset_names(raw_dataset_names)
     include_cam_extrinsics = include_cam_extrinsics or ("cam" in repo_name)
+    transform_state_actions_to_camera = transform_state_actions_to_camera or trans_base
     if transform_state_actions_to_camera and not include_cam_extrinsics:
         raise ValueError("transform_state_actions_to_camera=True requires include_cam_extrinsics=True.")
 
