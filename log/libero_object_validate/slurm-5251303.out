@@ -1,0 +1,13 @@
+===== LIBERO HDF5 VALIDATION ENV CHECK =====
+repo root: /scratch/yp2841/geometry-vla/openpi_cam
+raw hdf5 root: /scratch/yp2841/geometry-vla/libero_object_camera_left_roll11
+include camera labels: original+camvar_00+camvar_02+camvar_03+camvar_05+camvar_06+camvar_09+camvar_10
+exclude camera labels: <none>
+validate workers: 8
+delete bad: false
+/scratch/yp2841/geometry-vla/openpi_cam/.venv/bin/python
+Python 3.11.14
+cs603.hpc.nyu.edu
+[validate-hdf5] dataset_root=/scratch/yp2841/geometry-vla/libero_object_camera_left_roll11 selected_files=80 include_camera_labels=['camvar_00', 'camvar_02', 'camvar_03', 'camvar_05', 'camvar_06', 'camvar_09', 'camvar_10', 'original'] exclude_camera_labels=None num_workers=8 delete_bad=False
+[validate-hdf5] checked=80 bad=0
+Validation completed successfully.
