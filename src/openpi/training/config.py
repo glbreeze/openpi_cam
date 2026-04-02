@@ -694,6 +694,25 @@ _CONFIGS = [
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
     ),
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_full_finetune_standard",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="absolute_pose",
+            cross_view=cross_view_config.CrossViewFusionConfig(type="standard"),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_cam",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_cam",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
     #
     # Fine-tuning Libero configs.
     #

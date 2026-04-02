@@ -165,13 +165,39 @@ def get_model_parameters(model):
     )
 
 
+def _list_checkpoint_steps(checkpoint_dir):
+    return sorted(
+        int(d.name)
+        for d in checkpoint_dir.iterdir()
+        if d.is_dir() and d.name.isdigit() and not d.name.startswith("tmp_")
+    )
+
+
+def prune_checkpoints(checkpoint_dir, latest_step, keep_period):
+    """Keep the latest checkpoint plus archived checkpoints matching keep_period."""
+    checkpoint_steps = _list_checkpoint_steps(checkpoint_dir)
+    keep_steps = {latest_step}
+    if keep_period is not None and keep_period > 0:
+        keep_steps.update(step for step in checkpoint_steps if step % keep_period == 0)
+
+    removed_steps = []
+    for step in checkpoint_steps:
+        if step in keep_steps:
+            continue
+        shutil.rmtree(checkpoint_dir / f"{step}")
+        removed_steps.append(step)
+
+    if removed_steps:
+        logging.info(f"Pruned rolling checkpoints: removed={removed_steps}, latest={latest_step}, keep={sorted(keep_steps)}")
+
+
 def save_checkpoint(model, optimizer, global_step, config, is_main, data_config):
     """Save a checkpoint with model state, optimizer state, and metadata."""
     if not is_main:
         return
 
     # Only save if it's time to save or if it's the final step
-    if (global_step % config.save_interval == 0 and global_step > 0) or global_step == config.num_train_steps - 1:
+    if (global_step % config.save_interval == 0 and global_step > 0) or global_step == config.num_train_steps:
         # Create temporary directory for atomic checkpoint saving
         final_ckpt_dir = config.checkpoint_dir / f"{global_step}"
         tmp_ckpt_dir = config.checkpoint_dir / f"tmp_{global_step}"
@@ -205,6 +231,7 @@ def save_checkpoint(model, optimizer, global_step, config, is_main, data_config)
         if final_ckpt_dir.exists():
             shutil.rmtree(final_ckpt_dir)
         tmp_ckpt_dir.rename(final_ckpt_dir)
+        prune_checkpoints(config.checkpoint_dir, latest_step=global_step, keep_period=config.keep_period)
 
         logging.info(f"Saved checkpoint at step {global_step} -> {final_ckpt_dir}")
 
@@ -292,11 +319,7 @@ def load_checkpoint(model, optimizer, checkpoint_dir, device):
 
 def get_latest_checkpoint_step(checkpoint_dir):
     """Get the latest checkpoint step number from a checkpoint directory."""
-    checkpoint_steps = [
-        int(d.name)
-        for d in checkpoint_dir.iterdir()
-        if d.is_dir() and d.name.isdigit() and not d.name.startswith("tmp_")
-    ]
+    checkpoint_steps = _list_checkpoint_steps(checkpoint_dir)
     return max(checkpoint_steps) if checkpoint_steps else None
 
 

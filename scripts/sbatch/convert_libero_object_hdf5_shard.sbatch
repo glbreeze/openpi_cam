@@ -49,10 +49,14 @@ NUM_SHARDS=${NUM_SHARDS:-1}
 SHARD_INDEX=${SHARD_INDEX:-${SLURM_ARRAY_TASK_ID:-0}}
 REPO_ID_PREFIX=${REPO_ID_PREFIX:-glbreeze/libero_object_tmp_shards}
 REPO_ID="${REPO_ID_PREFIX}/shard_$(printf '%03d' "${SHARD_INDEX}")"
+INCLUDE_CAMERA_LABELS=${INCLUDE_CAMERA_LABELS:-}
+EXCLUDE_CAMERA_LABELS=${EXCLUDE_CAMERA_LABELS:-}
 MAX_FILES=${MAX_FILES:-0}
 MAX_EPISODES_PER_FILE=${MAX_EPISODES_PER_FILE:-0}
 CONVERT_FPS=${CONVERT_FPS:-10}
 CONVERT_IMAGE_SIZE=${CONVERT_IMAGE_SIZE:-256}
+IMAGE_WRITER_THREADS=${IMAGE_WRITER_THREADS:-4}
+IMAGE_WRITER_PROCESSES=${IMAGE_WRITER_PROCESSES:-2}
 STAGE_FILES_TO_LOCAL=${STAGE_FILES_TO_LOCAL:-true}
 CACHE_ROOT=${CACHE_ROOT:-${GEO_ROOT}/.cache/huggingface}
 OPENPI_CACHE_ROOT=${OPENPI_CACHE_ROOT:-${GEO_ROOT}/.cache/openpi}
@@ -95,6 +99,10 @@ echo "mode: ${MODE}"
 echo "repo id: ${REPO_ID}"
 echo "shard index: ${SHARD_INDEX}"
 echo "num shards: ${NUM_SHARDS}"
+echo "include camera labels: ${INCLUDE_CAMERA_LABELS:-<none>}"
+echo "exclude camera labels: ${EXCLUDE_CAMERA_LABELS:-<none>}"
+echo "image writer threads: ${IMAGE_WRITER_THREADS}"
+echo "image writer processes: ${IMAGE_WRITER_PROCESSES}"
 echo "stage files to local: ${STAGE_FILES_TO_LOCAL}"
 echo "hf lerobot home: ${HF_LEROBOT_HOME}"
 which python
@@ -108,16 +116,28 @@ case "${STAGE_FILES_TO_LOCAL,,}" in
     ;;
 esac
 
-python examples/libero/convert_libero_hdf5_to_lerobot.py \
-  --dataset-root "${RAW_HDF5_ROOT}" \
-  --mode "${MODE}" \
-  --repo-id "${REPO_ID}" \
-  --max-files "${MAX_FILES}" \
-  --max-episodes-per-file "${MAX_EPISODES_PER_FILE}" \
-  --fps "${CONVERT_FPS}" \
-  --image-size "${CONVERT_IMAGE_SIZE}" \
-  --num-shards "${NUM_SHARDS}" \
-  --shard-index "${SHARD_INDEX}" \
+CONVERT_ARGS=(
+  --dataset-root "${RAW_HDF5_ROOT}"
+  --mode "${MODE}"
+  --repo-id "${REPO_ID}"
+  --max-files "${MAX_FILES}"
+  --max-episodes-per-file "${MAX_EPISODES_PER_FILE}"
+  --fps "${CONVERT_FPS}"
+  --image-size "${CONVERT_IMAGE_SIZE}"
+  --image-writer-threads "${IMAGE_WRITER_THREADS}"
+  --image-writer-processes "${IMAGE_WRITER_PROCESSES}"
+  --num-shards "${NUM_SHARDS}"
+  --shard-index "${SHARD_INDEX}"
   "${stage_flag}"
+)
+
+if [[ -n "${INCLUDE_CAMERA_LABELS}" ]]; then
+  CONVERT_ARGS+=(--include-camera-labels "${INCLUDE_CAMERA_LABELS}")
+fi
+if [[ -n "${EXCLUDE_CAMERA_LABELS}" ]]; then
+  CONVERT_ARGS+=(--exclude-camera-labels "${EXCLUDE_CAMERA_LABELS}")
+fi
+
+python examples/libero/convert_libero_hdf5_to_lerobot.py "${CONVERT_ARGS[@]}"
 
 echo "Shard conversion completed successfully."

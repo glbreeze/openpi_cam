@@ -229,7 +229,7 @@ def _get_camera_extrinsic(env, camera_name: str) -> np.ndarray:
     return extrinsic
 
 
-def _reset_env_to_frame(env, model_xml: str, state: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _load_episode_model(env, model_xml: str) -> None:
     reset_success = False
     while not reset_success:
         try:
@@ -240,10 +240,13 @@ def _reset_env_to_frame(env, model_xml: str, state: np.ndarray) -> tuple[np.ndar
 
     env.reset_from_xml_string(_rewrite_model_xml_paths(model_xml))
     env.sim.reset()
-    env.sim.set_state_from_flattened(state)
-    env.sim.forward()
     env._post_process()
     env._update_observables(force=True)
+
+
+def _set_env_state(env, state: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    env.sim.set_state_from_flattened(state)
+    env.sim.forward()
 
     return (
         _get_camera_extrinsic(env, "agentview"),
@@ -323,7 +326,14 @@ def _default_repo_id(mode: Literal["original_only", "all_views"]) -> str:
     return "glbreeze/libero_object_cam"
 
 
-def _create_dataset(repo_id: str, fps: int, image_size: int) -> LeRobotDataset:
+def _create_dataset(
+    repo_id: str,
+    fps: int,
+    image_size: int,
+    *,
+    image_writer_threads: int = 10,
+    image_writer_processes: int = 5,
+) -> LeRobotDataset:
     output_path = HF_LEROBOT_HOME / repo_id
     if output_path.exists():
         shutil.rmtree(output_path)
@@ -364,8 +374,8 @@ def _create_dataset(repo_id: str, fps: int, image_size: int) -> LeRobotDataset:
                 "names": ["row", "col"],
             },
         },
-        image_writer_threads=10,
-        image_writer_processes=5,
+        image_writer_threads=image_writer_threads,
+        image_writer_processes=image_writer_processes,
     )
 
 
@@ -399,6 +409,8 @@ def main(
     shard_index: int = 0,
     stage_files_to_local: bool = False,
     push_to_hub: bool = False,
+    image_writer_threads: int = 10,
+    image_writer_processes: int = 5,
 ):
     dataset_root_path = pathlib.Path(dataset_root).expanduser().resolve()
     if not dataset_root_path.exists():
@@ -432,7 +444,13 @@ def main(
         print(f"[convert] staged_files_root={staging_root}")
 
     output_repo_id = repo_id or _default_repo_id(mode)
-    dataset = _create_dataset(output_repo_id, fps=fps, image_size=image_size)
+    dataset = _create_dataset(
+        output_repo_id,
+        fps=fps,
+        image_size=image_size,
+        image_writer_threads=image_writer_threads,
+        image_writer_processes=image_writer_processes,
+    )
 
     total_episodes = 0
     total_frames = 0
@@ -483,12 +501,9 @@ def main(
                             f"Expected action dim 7, got {actions.shape[-1]} in {hdf5_path} / {episode_name}"
                         )
 
+                    _load_episode_model(env, model_xml=model_xml)
                     for frame_index in range(frame_count):
-                        agent_extrinsic, wrist_extrinsic = _reset_env_to_frame(
-                            env,
-                            model_xml=model_xml,
-                            state=states[frame_index],
-                        )
+                        agent_extrinsic, wrist_extrinsic = _set_env_state(env, states[frame_index])
                         dataset.add_frame(
                             {
                                 "image": _preprocess_image(agent_images[frame_index], image_size),

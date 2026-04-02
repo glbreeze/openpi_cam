@@ -57,17 +57,31 @@ WANDB_PROJECT=${WANDB_PROJECT:-openpi_cam_libero_object}
 NUM_GPUS=${NUM_GPUS:-${SLURM_GPUS_ON_NODE:-4}}
 NUM_WORKERS=${NUM_WORKERS:-16}
 BATCH_SIZE=${BATCH_SIZE:-32}
-NUM_TRAIN_STEPS=${NUM_TRAIN_STEPS:-30000}
-SAVE_INTERVAL=${SAVE_INTERVAL:-5000}
+NUM_TRAIN_STEPS=${NUM_TRAIN_STEPS:-60000}
+SAVE_INTERVAL=${SAVE_INTERVAL:-1000}
+KEEP_PERIOD=${KEEP_PERIOD:-5000}
 CHECKPOINT_BASE_DIR=${CHECKPOINT_BASE_DIR:-${REPO_ROOT}/checkpoints}
 CACHE_ROOT=${CACHE_ROOT:-${GEO_ROOT}/.cache/huggingface}
 OPENPI_CACHE_ROOT=${OPENPI_CACHE_ROOT:-${GEO_ROOT}/.cache/openpi}
+MODEL_POSE_ENC_TYPE=${MODEL_POSE_ENC_TYPE:-absolute_pose}
+CROSS_VIEW_TYPE=${CROSS_VIEW_TYPE:-}
 
 if [[ "${USE_CAM}" == "true" ]]; then
   CONFIG_NAME=${CONFIG_NAME:-pi0_libero_cam_pytorch_full_finetune}
   DATASET_REPO_ID=${DATASET_REPO_ID:-glbreeze/libero_object_cam}
   NORM_ASSET_ID=${NORM_ASSET_ID:-glbreeze/libero_object_cam}
   EXP_NAME=${EXP_NAME:-pi0_libero_object_cam_${SLURM_JOB_ID:-manual}}
+
+  if [[ -z "${CROSS_VIEW_TYPE}" ]]; then
+    case "${CONFIG_NAME}" in
+      pi0_libero_cam_pytorch_full_finetune)
+        CROSS_VIEW_TYPE="simple"
+        ;;
+      pi0_libero_cam_pytorch_full_finetune_standard)
+        CROSS_VIEW_TYPE="standard"
+        ;;
+    esac
+  fi
 else
   CONFIG_NAME=${CONFIG_NAME:-pi0_libero_pytorch_full_finetune}
   DATASET_REPO_ID=${DATASET_REPO_ID:-glbreeze/libero_object}
@@ -171,6 +185,7 @@ TRAIN_ARGS=(
   --num-workers="${NUM_WORKERS}"
   --num-train-steps="${NUM_TRAIN_STEPS}"
   --save-interval="${SAVE_INTERVAL}"
+  --keep-period="${KEEP_PERIOD}"
   "${RESUME_OR_OVERWRITE_ARG}"
   --pytorch_weight_path "${BASE_MODEL_DIR}"
   --data.repo_id "${DATASET_REPO_ID}"
@@ -181,9 +196,13 @@ TRAIN_ARGS=(
 
 if [[ "${USE_CAM}" == "true" ]]; then
   TRAIN_ARGS+=(
-    --model.pose_enc_type absolute_pose
-    --model.cross_view.type simple
+    --model.pose_enc_type "${MODEL_POSE_ENC_TYPE}"
   )
+  if [[ -n "${CROSS_VIEW_TYPE}" ]]; then
+    TRAIN_ARGS+=(
+      --model.cross_view.type "${CROSS_VIEW_TYPE}"
+    )
+  fi
 fi
 
 echo "===== TRAIN ENV CHECK ====="
@@ -192,6 +211,8 @@ echo "use_cam: ${USE_CAM}"
 echo "resume: ${RESUME}"
 echo "config: ${CONFIG_NAME}"
 echo "exp: ${EXP_NAME}"
+echo "pose_enc_type: ${MODEL_POSE_ENC_TYPE}"
+echo "cross_view_type: ${CROSS_VIEW_TYPE:-config_default}"
 echo "dataset: ${DATASET_DIR}"
 echo "base model: ${BASE_MODEL_DIR}"
 echo "norm stats: ${NORM_STATS_DIR}"
@@ -200,6 +221,8 @@ echo "wandb root: ${WANDB_DIR:-disabled}"
 echo "num_gpus: ${NUM_GPUS}"
 echo "batch_size: ${BATCH_SIZE}"
 echo "num_train_steps: ${NUM_TRAIN_STEPS}"
+echo "save_interval: ${SAVE_INTERVAL}"
+echo "keep_period: ${KEEP_PERIOD}"
 which python
 python -V
 hostname
