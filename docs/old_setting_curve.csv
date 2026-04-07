@@ -1,0 +1,13 @@
+series,step,success_rate,source_json
+baseline,5000,0.682,openpi_cam/log/libero_object_multicam_eval/camvar04_ckpt_sweep/cam_pi0_baseline/summary/aggregate_5000_5112376.json
+baseline,10000,0.778,openpi_cam/log/libero_object_multicam_eval/camvar04_ckpt_sweep/cam_pi0_baseline/summary/aggregate_10000_5112378.json
+baseline,15000,0.736,openpi_cam/log/libero_object_multicam_eval/camvar04_ckpt_sweep/cam_pi0_baseline/summary/aggregate_15000_5112379.json
+baseline,20000,0.788,openpi_cam/log/libero_object_multicam_eval/camvar04_ckpt_sweep/cam_pi0_baseline/summary/aggregate_20000_5112377.json
+baseline,25000,0.772,openpi_cam/log/libero_object_multicam_eval/camvar04_ckpt_sweep/cam_pi0_baseline/summary/aggregate_25000_5112381.json
+baseline,30000,0.768,openpi_cam/log/libero_object_multicam_eval/camvar04_ckpt_sweep/cam_pi0_baseline/summary/aggregate_30000_5112380.json
+simple,5000,0.588,openpi_cam/log/libero_object_multicam_eval/camvar04_ckpt_sweep/posefusion_multi/summary/aggregate_5000_5112389.json
+simple,10000,0.728,openpi_cam/log/libero_object_multicam_eval/camvar04_ckpt_sweep/posefusion_multi/summary/aggregate_10000_5112382.json
+simple,15000,0.786,openpi_cam/log/libero_object_multicam_eval/camvar04_ckpt_sweep/posefusion_multi/summary/aggregate_15000_5112383.json
+simple,20000,0.774,openpi_cam/log/libero_object_multicam_eval/camvar04_ckpt_sweep/posefusion_multi/summary/aggregate_20000_5112386.json
+simple,25000,0.77,openpi_cam/log/libero_object_multicam_eval/camvar04_ckpt_sweep/posefusion_multi/summary/aggregate_25000_5112392.json
+simple,30000,0.778,openpi_cam/log/libero_object_multicam_eval/camvar04_ckpt_sweep/posefusion_multi/summary/aggregate_30000_5112384.json

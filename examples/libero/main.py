@@ -1,5 +1,6 @@
 import collections
 import dataclasses
+import json
 import logging
 import math
 import os
@@ -59,6 +60,7 @@ class Args:
     #################################################################################################################
     host: str = "0.0.0.0"
     port: int = 8000
+    model_name: str = ""
     resize_size: int = 224
     replan_steps: int = 5
 
@@ -77,6 +79,7 @@ class Args:
     # Utils
     #################################################################################################################
     video_out_path: str = "data/libero/videos"  # Path to save videos
+    summary_out_path: str | None = None  # Optional JSON summary path
 
     seed: int = 7  # Random Seed (for reproducibility)
 
@@ -118,6 +121,7 @@ def eval_libero(args: Args) -> None:
 
     # Start evaluation
     total_episodes, total_successes = 0, 0
+    records: list[dict] = []
     for task_id in tqdm.tqdm(range(task_id_start, task_id_end)):
         # Get task
         task = task_suite.get_task(task_id)
@@ -225,11 +229,39 @@ def eval_libero(args: Args) -> None:
             logging.info(f"# successes: {total_successes} ({total_successes / total_episodes * 100:.1f}%)")
 
         # Log final results
-        logging.info(f"Current task success rate: {float(task_successes) / float(task_episodes)}")
-        logging.info(f"Current total success rate: {float(total_successes) / float(total_episodes)}")
+        task_success_rate = float(task_successes) / float(task_episodes)
+        total_success_rate = float(total_successes) / float(total_episodes)
+        logging.info(f"Current task success rate: {task_success_rate}")
+        logging.info(f"Current total success rate: {total_success_rate}")
 
-    logging.info(f"Total success rate: {float(total_successes) / float(total_episodes)}")
+        records.append(
+            {
+                "task_id": task_id,
+                "task_description": task_description,
+                "episodes": task_episodes,
+                "successes": task_successes,
+                "success_rate": task_success_rate,
+            }
+        )
+
+    summary = {
+        "model_name": args.model_name or None,
+        "task_suite_name": args.task_suite_name,
+        "task_range": [task_id_start, task_id_end],
+        "num_trials_per_task": args.num_trials_per_task,
+        "total_episodes": total_episodes,
+        "total_successes": total_successes,
+        "total_success_rate": float(total_successes) / float(total_episodes),
+        "records": records,
+    }
+
+    logging.info(f"Total success rate: {summary['total_success_rate']}")
     logging.info(f"Total episodes: {total_episodes}")
+
+    if args.summary_out_path:
+        summary_path = pathlib.Path(args.summary_out_path)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(json.dumps(summary, indent=2) + "\n")
 
 
 def _get_libero_env(task, resolution, seed):

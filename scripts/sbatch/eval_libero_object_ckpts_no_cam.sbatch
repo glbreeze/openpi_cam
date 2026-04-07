@@ -50,7 +50,9 @@ if [[ -z "${REPO_ROOT}" ]]; then
 fi
 
 GEO_ROOT=${GEO_ROOT:-$(cd -- "${REPO_ROOT}/.." && pwd)}
-CHECKPOINT_ROOT="${REPO_ROOT}/checkpoints/pi0_libero_pytorch_full_finetune/pi0_libero_object_4690327"
+MODEL_NAME=${MODEL_NAME:-baseline_no_cam}
+CONFIG_NAME=${CONFIG_NAME:-pi0_libero_pytorch_full_finetune}
+CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${REPO_ROOT}/checkpoints/pi0_libero_pytorch_full_finetune/pi0_libero_object_4690327}
 CHECKPOINT_ASSET_ID=${CHECKPOINT_ASSET_ID:-glbreeze/libero_object}
 SERVE_ASSET_ID=${SERVE_ASSET_ID:-glbreeze/libero}
 
@@ -96,7 +98,9 @@ unset TRANSFORMERS_CACHE
 mkdir -p "${REPO_ROOT}/log/libero_object_eval"
 mkdir -p "${LIBERO_CONFIG_PATH}"
 SERVER_LOG_ROOT="${REPO_ROOT}/log/libero_object_eval/server_logs/no_cam"
+SUMMARY_ROOT=${SUMMARY_ROOT:-${REPO_ROOT}/log/libero_object_eval/summaries/${MODEL_NAME}}
 mkdir -p "${SERVER_LOG_ROOT}"
+mkdir -p "${SUMMARY_ROOT}"
 
 cat > "${LIBERO_CONFIG_PATH}/config.yaml" <<EOF
 benchmark_root: ${REPO_ROOT}/third_party/libero/libero/libero
@@ -149,6 +153,7 @@ fi
 
 video_out="${REPO_ROOT}/data/libero/videos/libero_object/no_cam/${CHECKPOINT_STEP}"
 server_log="${SERVER_LOG_ROOT}/serve_${CHECKPOINT_STEP}.log"
+summary_out="${SUMMARY_ROOT}/summary_${CHECKPOINT_STEP}.json"
 mkdir -p "${video_out}"
 mkdir -p "${ckpt_dir}/assets/$(dirname "${SERVE_ASSET_ID}")"
 ln -sfn "$(basename "${CHECKPOINT_ASSET_ID}")" "${ckpt_dir}/assets/${SERVE_ASSET_ID}"
@@ -161,7 +166,7 @@ PYTHONUNBUFFERED=1 CUDA_VISIBLE_DEVICES=0 python -u scripts/serve_policy.py \
   --batch_max_size 1 \
   --batch_timeout_ms 0.0 \
   policy:checkpoint \
-  --policy.config pi0_libero_pytorch_full_finetune \
+  --policy.config "${CONFIG_NAME}" \
   --policy.dir "${ckpt_dir}" > "${server_log}" 2>&1 &
 server_pid=$!
 
@@ -180,10 +185,11 @@ echo "Running LIBERO eval for checkpoint ${CHECKPOINT_STEP}"
 python examples/libero/main.py \
   --args.host 127.0.0.1 \
   --args.port "${PORT}" \
+  --args.model-name "${MODEL_NAME}" \
   --args.task-suite-name "${SUITE_NAME}" \
   --args.num-trials-per-task "${NUM_TRIALS_PER_TASK}" \
   --args.replan-steps "${REPLAN_STEPS}" \
   --args.resize-size "${RESIZE_SIZE}" \
   --args.seed "${SEED}" \
-  --args.video-out-path "${video_out}"
-
+  --args.video-out-path "${video_out}" \
+  --args.summary-out-path "${summary_out}"
