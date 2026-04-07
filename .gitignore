@@ -138,6 +138,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+!scripts/env/
+!scripts/env/*.sh
 
 # Spyder project settings
 .spyderproject
