@@ -1,5 +1,6 @@
 import logging
 import math
+import os
 
 import torch
 from torch import Tensor
@@ -114,7 +115,24 @@ class PI0Pytorch(nn.Module):
             self.action_time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
         torch.set_float32_matmul_precision("high")
-        self.sample_actions = torch.compile(self.sample_actions, mode="max-autotune")
+
+        disable_torch_compile = os.getenv("OPENPI_DISABLE_TORCH_COMPILE", "").lower() in {"1", "true", "yes"}
+        compile_reason = None
+        if disable_torch_compile:
+            compile_reason = "disabled via OPENPI_DISABLE_TORCH_COMPILE"
+        elif self.cross_view_config.type != "none":
+            # The cross-view path currently uses cached RoPE position tensors that can trip
+            # TorchDynamo/CUDAGraphs during batched policy serving. Keep training untouched and
+            # run inference eagerly for cross-view models until that path is made compile-safe.
+            compile_reason = f"cross_view={self.cross_view_config.type}"
+        elif not hasattr(torch, "compile"):
+            compile_reason = "torch.compile unavailable"
+
+        if compile_reason is None:
+            self.sample_actions = torch.compile(self.sample_actions, mode="max-autotune")
+            logging.info("Enabled torch.compile for sample_actions")
+        else:
+            logging.info("Skipping torch.compile for sample_actions (%s)", compile_reason)
 
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
