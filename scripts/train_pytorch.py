@@ -165,6 +165,153 @@ def get_model_parameters(model):
     )
 
 
+def get_model_named_parameters(model):
+    """Get named parameters from model, handling DDP wrapper."""
+    return (
+        model.module.named_parameters()
+        if isinstance(model, torch.nn.parallel.DistributedDataParallel)
+        else model.named_parameters()
+    )
+
+
+def _parse_prefixes(raw_value: str | None) -> list[str]:
+    if raw_value is None:
+        return []
+    return [value.strip() for value in raw_value.split(",") if value.strip()]
+
+
+def _parse_lr_multipliers(raw_value: str | None) -> list[tuple[str, float]]:
+    if raw_value is None:
+        return []
+
+    multipliers: list[tuple[str, float]] = []
+    for entry in raw_value.split(","):
+        item = entry.strip()
+        if not item:
+            continue
+        prefix, sep, multiplier = item.partition("=")
+        if not sep:
+            raise ValueError(
+                "OPENPI_LR_MULTIPLIERS entries must use the form '<module_prefix>=<multiplier>'"
+            )
+        multipliers.append((prefix.strip(), float(multiplier.strip())))
+    return multipliers
+
+
+def _matches_prefix(name: str, prefixes: list[str]) -> bool:
+    return any(name.startswith(prefix) for prefix in prefixes)
+
+
+def apply_trainable_prefixes(model):
+    trainable_prefixes = _parse_prefixes(os.environ.get("OPENPI_TRAINABLE_PREFIXES"))
+    if not trainable_prefixes:
+        return
+
+    total_params = 0
+    trainable_params = 0
+    trainable_tensors = 0
+    frozen_tensors = 0
+
+    for name, param in get_model_named_parameters(model):
+        total_params += param.numel()
+        should_train = _matches_prefix(name, trainable_prefixes)
+        param.requires_grad_(should_train)
+        if should_train:
+            trainable_params += param.numel()
+            trainable_tensors += 1
+        else:
+            frozen_tensors += 1
+
+    if trainable_tensors == 0:
+        raise ValueError(
+            "OPENPI_TRAINABLE_PREFIXES did not match any parameters. "
+            f"Prefixes: {trainable_prefixes}"
+        )
+
+    logging.info(
+        "Applied trainable-prefix filter: prefixes=%s trainable_tensors=%d frozen_tensors=%d "
+        "trainable_params=%d total_params=%d",
+        trainable_prefixes,
+        trainable_tensors,
+        frozen_tensors,
+        trainable_params,
+        total_params,
+    )
+
+
+def build_optimizer(model, config: _config.TrainConfig, base_lr: float):
+    named_params = [(name, param) for name, param in get_model_named_parameters(model) if param.requires_grad]
+    if not named_params:
+        raise ValueError("No trainable parameters remain after applying trainable-prefix filter.")
+
+    lr_multipliers = _parse_lr_multipliers(os.environ.get("OPENPI_LR_MULTIPLIERS"))
+    multiplier_to_params: dict[tuple[str, float], list[torch.nn.Parameter]] = {}
+    default_params: list[torch.nn.Parameter] = []
+    default_param_count = 0
+
+    for name, param in named_params:
+        matched = False
+        for prefix, multiplier in lr_multipliers:
+            if name.startswith(prefix):
+                multiplier_to_params.setdefault((prefix, multiplier), []).append(param)
+                matched = True
+                break
+        if not matched:
+            default_params.append(param)
+            default_param_count += param.numel()
+
+    param_groups = []
+    if default_params:
+        param_groups.append(
+            {
+                "params": default_params,
+                "lr": base_lr,
+                "lr_multiplier": 1.0,
+                "group_name": "default",
+            }
+        )
+
+    for prefix, multiplier in lr_multipliers:
+        group_params = multiplier_to_params.get((prefix, multiplier), [])
+        if not group_params:
+            continue
+        param_groups.append(
+            {
+                "params": group_params,
+                "lr": base_lr * multiplier,
+                "lr_multiplier": multiplier,
+                "group_name": prefix,
+            }
+        )
+
+    if not param_groups:
+        raise ValueError("Optimizer param groups are empty.")
+
+    optim = torch.optim.AdamW(
+        param_groups,
+        lr=base_lr,
+        betas=(config.optimizer.b1, config.optimizer.b2),
+        eps=config.optimizer.eps,
+        weight_decay=config.optimizer.weight_decay,
+    )
+
+    for group in optim.param_groups:
+        group_name = group.get("group_name", "unnamed")
+        lr_multiplier = group.get("lr_multiplier", 1.0)
+        param_count = sum(param.numel() for param in group["params"])
+        logging.info(
+            "Optimizer group: name=%s lr_multiplier=%.2f param_count=%d",
+            group_name,
+            lr_multiplier,
+            param_count,
+        )
+
+    if default_params:
+        logging.info("Default optimizer group param_count=%d", default_param_count)
+
+    return optim
+
+
 def _list_checkpoint_steps(checkpoint_dir):
     return sorted(
         int(d.name)
@@ -482,6 +629,8 @@ def train_loop(config: _config.TrainConfig):
         if unexpected:
             logging.warning(f"--- model loading ---- Unexpected keys in checkpoint: {unexpected}")
 
+    apply_trainable_prefixes(model)
+
     # Optimizer + learning rate schedule from config
     warmup_steps = config.lr_schedule.warmup_steps
     peak_lr = config.lr_schedule.peak_lr
@@ -489,13 +638,7 @@ def train_loop(config: _config.TrainConfig):
     end_lr = config.lr_schedule.decay_lr
 
     # Create optimizer with config parameters
-    optim = torch.optim.AdamW(
-        model.parameters(),
-        lr=peak_lr,
-        betas=(config.optimizer.b1, config.optimizer.b2),
-        eps=config.optimizer.eps,
-        weight_decay=config.optimizer.weight_decay,
-    )
+    optim = build_optimizer(model, config, peak_lr)
 
     # Load checkpoint if resuming
     global_step = 0
@@ -566,7 +709,7 @@ def train_loop(config: _config.TrainConfig):
 
             # Update LR
             for pg in optim.param_groups:
-                pg["lr"] = lr_schedule(global_step)
+                pg["lr"] = lr_schedule(global_step) * pg.get("lr_multiplier", 1.0)
 
             # Forward pass
             losses = model(observation, actions)
