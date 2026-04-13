@@ -78,6 +78,31 @@ New: overall & \textbf{84.53} & 77.32 & 75.72 \\
 
 The main trend is a sign flip: simple beats baseline in the old setting, but both camera-aware variants trail baseline in the new setting.
 
+\section{Recent Follow-up Experiments}
+To isolate which design choice hurts in the new setting, we ran two follow-up experiments after the original \texttt{camtrain60k} comparison:
+\begin{itemize}
+    \item \textbf{simple\_nocross}: keep the camera pose token, but remove cross-view fusion entirely. This uses the same multi-camera \texttt{camtrain60k} dataset and a two-stage recipe (5k warmup on the new pose module, then joint fine-tuning).
+    \item \textbf{relpose\_agentcam\_nocross}: remove fusion as above, switch pose input to relative pose, and rewrite training \texttt{state/actions} into the agent-camera frame before recomputing normalization statistics.
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{5.1cm}cc>{\raggedright\arraybackslash}p{4.0cm}}
+\toprule
+\textbf{Experiment} & \textbf{Best ckpt} & \textbf{Success (\%)} & \textbf{Notes} \\
+\midrule
+Baseline (\texttt{camtrain60k}) & 35000 & \textbf{86.50} & Best result from the original baseline sweep \\
+Simple no fusion (\texttt{simple\_nocross}) & 30000 & 85.25 & Same data as \texttt{camtrain60k}; pose token only, no fusion \\
+Relative pose + agent-camera action + no fusion & 25000 & 65.50 & Uses rewritten agent-camera-frame actions and new norm stats \\
+\bottomrule
+\end{tabular}
+\caption{Recent follow-up experiments on top of the new setting. Removing cross-view fusion closes most of the gap to baseline, while switching to relative pose plus agent-camera-frame actions performs much worse.}
+\label{tab:cam_followup_summary}
+\end{table}
+
+These follow-ups suggest that the main regression in the newer camera-aware variants comes from the fusion/action-space design rather than from adding camera conditioning itself. The no-fusion simple variant nearly matches baseline, while the relative-pose camera-frame variant remains far below it.
+
 \section{Checkpoint Sweep Results}
 Sweeps are included only to show training dynamics. The old sweep compares \texttt{cam\_pi0\_baseline} and \texttt{posefusion\_multi}, both trained on \texttt{glbreeze/libero\_object\_cam}.
 
@@ -140,6 +165,30 @@ Sweeps are included only to show training dynamics. The old sweep compares \text
 \end{table}
 
 The sweeps match the full evaluations: the old setting is close and ends slightly in favor of simple, while the new setting is baseline-dominant throughout most of training.
+
+\begin{table}[p]
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+\textbf{Step} & \textbf{Simple no fusion (\%)} & \textbf{RelPose + agent-cam action + no fusion (\%)} \\
+\midrule
+5000 & 59.00 & 52.75 \\
+10000 & 71.25 & 54.33 \\
+15000 & 70.42 & 65.00 \\
+20000 & 78.08 & 61.58 \\
+25000 & 82.25 & \textbf{65.50} \\
+30000 & \textbf{85.25} & 62.58 \\
+35000 & 81.75 & -- \\
+40000 & 82.83 & -- \\
+45000 & 80.67 & -- \\
+50000 & 82.75 & -- \\
+55000 & 83.58 & -- \\
+\bottomrule
+\end{tabular}
+\caption{Checkpoint sweeps for the two recent follow-up experiments. The no-fusion simple variant improves steadily and peaks at 30k, while the relative-pose agent-camera-action variant peaks early at 25k and then degrades.}
+\label{tab:cam_followup_curve}
+\end{table}
 
 \section{Old Setting Details}
 The old setting evaluates five train-distribution poses plus a separate held-out viewpoint, \texttt{camvar\_04}.
@@ -224,6 +273,8 @@ Held-out poses & 84.55 & 76.75 & 75.90 \\
 \begin{itemize}
     \item \textbf{Old setting}: simple is slightly better than baseline on both train-distribution poses and the held-out \texttt{camvar\_04} view.
     \item \textbf{New setting}: baseline is clearly better than both camera-aware variants on overall, seen, and held-out poses.
+    \item \textbf{Follow-up 1}: removing cross-view fusion nearly recovers baseline performance (85.25\% vs. 86.50\%).
+    \item \textbf{Follow-up 2}: moving to relative pose plus agent-camera-frame actions hurts badly; the best checkpoint reaches only 65.50\%.
     \item The main difference is the geometry regime: the old setup is narrow, while the new setup requires broader cross-view generalization.
 \end{itemize}
 
