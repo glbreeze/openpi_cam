@@ -94,7 +94,7 @@ To isolate which design choice hurts in the new setting, we ran two follow-up ex
 \midrule
 Baseline (\texttt{camtrain60k}) & 35000 & \textbf{86.50} & Best result from the original baseline sweep \\
 Simple no fusion (\texttt{simple\_nocross}) & 30000 & 85.25 & Same data as \texttt{camtrain60k}; pose token only, no fusion \\
-Relative pose + agent-camera action + no fusion & 25000 & 65.50 & Uses rewritten agent-camera-frame actions and new norm stats \\
+Relative pose + agent-camera action + no fusion & 25000 / 35000 & 65.50 & Uses rewritten agent-camera-frame actions and new norm stats; extending to 50k does not improve beyond the 25k peak \\
 \bottomrule
 \end{tabular}
 \caption{Recent follow-up experiments on top of the new setting. Removing cross-view fusion closes most of the gap to baseline, while switching to relative pose plus agent-camera-frame actions performs much worse.}
@@ -102,6 +102,33 @@ Relative pose + agent-camera action + no fusion & 25000 & 65.50 & Uses rewritten
 \end{table}
 
 These follow-ups suggest that the main regression in the newer camera-aware variants comes from the fusion/action-space design rather than from adding camera conditioning itself. The no-fusion simple variant nearly matches baseline, while the relative-pose camera-frame variant remains far below it.
+
+\begin{table}[p]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{View} & \textbf{Baseline 35k (\%)} & \textbf{Simple no fusion 30k (\%)} & \textbf{RelPose + agent-cam 25k (\%)} \\
+\midrule
+\texttt{original} & 85.00 & 82.00 & 68.00 \\
+\texttt{camvar\_00} & 83.00 & 88.00 & 78.00 \\
+\texttt{camvar\_01} & 87.00 & 83.00 & 82.00 \\
+\texttt{camvar\_02} & 91.00 & 85.00 & 87.00 \\
+\texttt{camvar\_03} & 87.00 & 86.00 & 78.00 \\
+\texttt{camvar\_04} & 86.00 & 82.00 & 62.00 \\
+\texttt{camvar\_05} & 86.00 & 89.00 & 60.00 \\
+\texttt{camvar\_06} & 85.00 & 91.00 & 70.00 \\
+\texttt{camvar\_07} & 89.00 & 91.00 & 32.00 \\
+\texttt{camvar\_08} & 86.00 & 78.00 & 23.00 \\
+\texttt{camvar\_09} & 87.00 & 82.00 & 71.00 \\
+\texttt{camvar\_10} & 86.00 & 86.00 & 75.00 \\
+\bottomrule
+\end{tabular}
+\caption{Per-view success rates for the best checkpoints of the recent follow-up experiments. The relpose agent-camera-action variant collapses most severely on \texttt{camvar\_07} and \texttt{camvar\_08}, while the no-fusion simple variant remains close to baseline and even exceeds it on several views.}
+\label{tab:cam_followup_per_view}
+\end{table}
+
+For the original experiments, per-view results are already listed in Tables~\ref{tab:cam_old_pose}, \ref{tab:cam_old_heldout}, and \ref{tab:cam_current_pose}. We keep those tables separate because they use the original evaluation protocol, while the recent follow-up checkpoints above come from the newer 10-trial sweep protocol.
 
 \section{Checkpoint Sweep Results}
 Sweeps are included only to show training dynamics. The old sweep compares \texttt{cam\_pi0\_baseline} and \texttt{posefusion\_multi}, both trained on \texttt{glbreeze/libero\_object\_cam}.
@@ -179,14 +206,14 @@ The sweeps match the full evaluations: the old setting is close and ends slightl
 20000 & 78.08 & 61.58 \\
 25000 & 82.25 & \textbf{65.50} \\
 30000 & \textbf{85.25} & 62.58 \\
-35000 & 81.75 & -- \\
-40000 & 82.83 & -- \\
-45000 & 80.67 & -- \\
-50000 & 82.75 & -- \\
+35000 & 81.75 & \textbf{65.50} \\
+40000 & 82.83 & 64.25 \\
+45000 & 80.67 & 65.25 \\
+50000 & 82.75 & 63.25 \\
 55000 & 83.58 & -- \\
 \bottomrule
 \end{tabular}
-\caption{Checkpoint sweeps for the two recent follow-up experiments. The no-fusion simple variant improves steadily and peaks at 30k, while the relative-pose agent-camera-action variant peaks early at 25k and then degrades.}
+\caption{Checkpoint sweeps for the two recent follow-up experiments. The no-fusion simple variant improves steadily and peaks at 30k, while the relative-pose agent-camera-action variant briefly ties its 25k peak at 35k after continuation to 50k but never improves beyond it.}
 \label{tab:cam_followup_curve}
 \end{table}
 
@@ -198,7 +225,7 @@ The old setting evaluates five train-distribution poses plus a separate held-out
 \small
 \begin{tabular}{lcc}
 \toprule
-\textbf{Pose} & \textbf{Baseline (\%)} & \textbf{Simple (\%)} \\
+\textbf{View} & \textbf{Baseline (\%)} & \textbf{Simple (\%)} \\
 \midrule
 \texttt{original} & 76.00 & 73.40 \\
 \texttt{camvar\_00} & 78.20 & 83.40 \\
@@ -207,7 +234,7 @@ The old setting evaluates five train-distribution poses plus a separate held-out
 \texttt{camvar\_03} & 82.60 & 84.80 \\
 \bottomrule
 \end{tabular}
-\caption{Old setting, train-distribution per-pose success rates.}
+\caption{Old setting, train-distribution per-view success rates.}
 \label{tab:cam_old_pose}
 \end{table}
 
@@ -249,7 +276,7 @@ Held-out poses & 84.55 & 76.75 & 75.90 \\
 \small
 \begin{tabular}{lccc}
 \toprule
-\textbf{Pose} & \textbf{Baseline (\%)} & \textbf{Simple (\%)} & \textbf{Standard (\%)} \\
+\textbf{View} & \textbf{Baseline (\%)} & \textbf{Simple (\%)} & \textbf{Standard (\%)} \\
 \midrule
 \texttt{original} & 78.60 & 76.40 & 78.20 \\
 \texttt{camvar\_00} & 86.60 & 76.00 & 74.20 \\
@@ -265,7 +292,7 @@ Held-out poses & 84.55 & 76.75 & 75.90 \\
 \texttt{camvar\_10} & 85.60 & 79.00 & 74.40 \\
 \bottomrule
 \end{tabular}
-\caption{New setting, per-pose success rates.}
+\caption{New setting, per-view success rates.}
 \label{tab:cam_current_pose}
 \end{table}
 
@@ -274,7 +301,7 @@ Held-out poses & 84.55 & 76.75 & 75.90 \\
     \item \textbf{Old setting}: simple is slightly better than baseline on both train-distribution poses and the held-out \texttt{camvar\_04} view.
     \item \textbf{New setting}: baseline is clearly better than both camera-aware variants on overall, seen, and held-out poses.
     \item \textbf{Follow-up 1}: removing cross-view fusion nearly recovers baseline performance (85.25\% vs. 86.50\%).
-    \item \textbf{Follow-up 2}: moving to relative pose plus agent-camera-frame actions hurts badly; the best checkpoint reaches only 65.50\%.
+    \item \textbf{Follow-up 2}: moving to relative pose plus agent-camera-frame actions hurts badly; even after extending training to 50k, the best checkpoint remains 65.50\%.
     \item The main difference is the geometry regime: the old setup is narrow, while the new setup requires broader cross-view generalization.
 \end{itemize}
 
