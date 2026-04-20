@@ -83,15 +83,15 @@ def main(
     data_dir: str,
     repo_name: str = "glbreeze/libero_cam",
     raw_dataset_names: str | None = None,
-    include_cam_extrinsics: bool = False,
+    include_cam_params: bool = False,
     transform_state_actions_to_camera: bool = False,
     *,
     push_to_hub: bool = False,
 ):
     raw_dataset_names = _resolve_raw_dataset_names(raw_dataset_names)
-    include_cam_extrinsics = include_cam_extrinsics or ("cam" in repo_name)
-    if transform_state_actions_to_camera and not include_cam_extrinsics:
-        raise ValueError("transform_state_actions_to_camera=True requires include_cam_extrinsics=True.")
+    include_cam_params = include_cam_params or ("cam" in repo_name)
+    if transform_state_actions_to_camera and not include_cam_params:
+        raise ValueError("transform_state_actions_to_camera=True requires include_cam_params=True.")
 
     # Clean up any existing dataset in the output directory
     output_path = HF_LEROBOT_HOME / repo_name
@@ -124,7 +124,7 @@ def main(
         },
     }
 
-    if include_cam_extrinsics:
+    if include_cam_params:
         features.update(
             {
                 "agent_extrinsic": {
@@ -135,6 +135,16 @@ def main(
                 "wrist_extrinsic": {
                     "dtype": "float32",
                     "shape": (4, 4),
+                    "names": ["row", "col"],
+                },
+                "agent_intrinsic": {
+                    "dtype": "float32",
+                    "shape": (3, 3),
+                    "names": ["row", "col"],
+                },
+                "wrist_intrinsic": {
+                    "dtype": "float32",
+                    "shape": (3, 3),
                     "names": ["row", "col"],
                 },
             }
@@ -170,9 +180,11 @@ def main(
                     "actions": action_trans,
                     "task": step["language_instruction"].decode(),
                 }
-                if include_cam_extrinsics:
+                if include_cam_params:
                     frame["agent_extrinsic"] = step["observation"]["agent_extrinsic"]
                     frame["wrist_extrinsic"] = step["observation"]["wrist_extrinsic"]
+                    frame["agent_intrinsic"] = step["observation"]["agent_intrinsic"]
+                    frame["wrist_intrinsic"] = step["observation"]["wrist_intrinsic"]
 
                 dataset.add_frame(frame)
             dataset.save_episode()

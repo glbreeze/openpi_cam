@@ -76,6 +76,12 @@ class LiberoInputs(transforms.DataTransformFn):
         if "observation/wrist_extrinsic" in data:
             inputs["wrist_extrinsic"] = data["observation/wrist_extrinsic"]
 
+        if "observation/agent_intrinsic" in data:
+            inputs["agent_intrinsic"] = data["observation/agent_intrinsic"]
+
+        if "observation/wrist_intrinsic" in data:
+            inputs["wrist_intrinsic"] = data["observation/wrist_intrinsic"]
+
         # Pad actions to the model action dimension. Keep this for your own dataset.
         # Actions are only available during training.
         if "actions" in data:

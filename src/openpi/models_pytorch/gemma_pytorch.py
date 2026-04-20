@@ -1,4 +1,3 @@
-from typing import Callable
 from typing import Literal
 
 import pytest
@@ -10,14 +9,131 @@ from transformers import PaliGemmaForConditionalGeneration
 from transformers.models.auto import CONFIG_MAPPING
 from transformers.models.gemma import modeling_gemma
 from openpi.models.cross_view_config import CrossViewFusionConfig
-from openpi.models_pytorch.layers.attn import Attention
+from openpi.models_pytorch.layers.block import Block
 from openpi.models_pytorch.layers.layer_scale import LayerScale
 from openpi.models_pytorch.layers.mlp import Mlp
+from openpi.models_pytorch.layers.prope import prepare_apply_fns as _prope_prepare_apply_fns
 from openpi.models_pytorch.layers.rope import PositionGetter
 from openpi.models_pytorch.layers.rope import RotaryPositionEmbedding2D
+from openpi.models_pytorch.utils import get_pixel
 
 
-class Block(nn.Module):
+class PatchEmbed(nn.Module):
+    """2D image to patch embedding: (B, C, H, W) -> (B, N, D).
+
+    Cleaned-up port of pi3's DINOv2 PatchEmbed.
+    """
+
+    def __init__(
+        self,
+        patch_size: int | tuple[int, int] = 14,
+        in_chans: int = 3,
+        embed_dim: int = 768,
+        norm_layer: type[nn.Module] | None = None,
+    ):
+        super().__init__()
+        self.patch_size = (patch_size, patch_size) if isinstance(patch_size, int) else patch_size
+        self.in_chans = in_chans
+        self.embed_dim = embed_dim
+
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=self.patch_size, stride=self.patch_size)
+        self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
+
+    def forward(self, x: Tensor) -> Tensor:
+        _, _, H, W = x.shape
+        pH, pW = self.patch_size
+        assert H % pH == 0, f"Input height {H} is not a multiple of patch height {pH}"
+        assert W % pW == 0, f"Input width {W} is not a multiple of patch width {pW}"
+
+        x = self.proj(x)  # (B, D, Hp, Wp)
+        x = x.flatten(2).transpose(1, 2)  # (B, N, D)
+        x = self.norm(x)
+        return x
+
+
+def se3_inverse(T: Tensor) -> Tensor:
+    """Compute the inverse of a batch of SE(3) matrices exploiting R orthogonality."""
+    R = T[..., :3, :3]
+    t = T[..., :3, 3:]
+    R_inv = R.transpose(-2, -1)
+    t_inv = -torch.matmul(R_inv, t)
+    T_inv = torch.zeros_like(T)
+    T_inv[..., :3, :3] = R_inv
+    T_inv[..., :3, 3:] = t_inv
+    T_inv[..., 3, 3] = 1.0
+    return T_inv
+
+
+class PRoPEAttention(nn.Module):
+    """Self-attention with PRoPE-style Q/K/V transforms driven by camera extrinsics+intrinsics.
+
+    Mirrors pi3's PRopeFlashAttention (AttentionRope subclass).
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int = 8,
+        qkv_bias: bool = False,
+        proj_bias: bool = True,
+        qk_norm: bool = False,
+        norm_layer: type[nn.Module] = nn.LayerNorm,
+        freq_base: float = 100.0,
+    ):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.freq_base = freq_base
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.proj = nn.Linear(dim, dim, bias=proj_bias)
+
+    def forward(
+        self,
+        x: Tensor,
+        extrinsics: Tensor,
+        image_h: int,
+        image_w: int,
+        patch_h: int,
+        patch_w: int,
+        Ks: Tensor | None = None,
+        attn_mask: Tensor | None = None,
+    ) -> Tensor:
+        B, N, C = x.shape
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).transpose(1, 3)
+        q, k, v = [qkv[:, :, i] for i in range(3)]
+        q = self.q_norm(q).to(v.dtype)
+        k = self.k_norm(k).to(v.dtype)
+
+        apply_q, apply_kv, apply_o = _prope_prepare_apply_fns(
+            head_dim=self.head_dim,
+            viewmats=extrinsics,
+            Ks=Ks,
+            patches_x=patch_w,
+            patches_y=patch_h,
+            image_width=image_w,
+            image_height=image_h,
+            freq_base=self.freq_base,
+        )
+        q = apply_q(q)
+        k = apply_kv(k)
+        v = apply_kv(v)
+
+        out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        out = apply_o(out)
+        out = out.transpose(1, 2).reshape(B, N, C)
+        return self.proj(out)
+
+
+class PoseInjectBlock(nn.Module):
+    """Transformer block with PRoPE attention for camera-pose injection.
+
+    Mirrors pi3's PoseInjectBlock. By default (connect=False), the block does NOT
+    add a residual from the input — the output is purely from attention + FFN.
+    """
+
     def __init__(
         self,
         dim: int,
@@ -26,48 +142,55 @@ class Block(nn.Module):
         qkv_bias: bool = True,
         proj_bias: bool = True,
         ffn_bias: bool = True,
-        drop: float = 0.0,
-        attn_drop: float = 0.0,
-        init_values=None,
-        act_layer: type[nn.Module] = nn.GELU,
+        qk_norm: bool = True,
+        init_values: float | None = 0.01,
         norm_layer: type[nn.Module] = nn.LayerNorm,
-        attn_class: type[nn.Module] = Attention,
-        ffn_layer: type[nn.Module] = Mlp,
-        qk_norm: bool = False,
-        fused_attn: bool = True,
-        rope=None,
-    ) -> None:
+        act_layer: type[nn.Module] = nn.GELU,
+        freq_base: float = 100.0,
+    ):
         super().__init__()
-
         self.norm1 = norm_layer(dim)
-        self.attn = attn_class(
+        self.attn = PRoPEAttention(
             dim,
             num_heads=num_heads,
             qkv_bias=qkv_bias,
             proj_bias=proj_bias,
-            attn_drop=attn_drop,
-            proj_drop=drop,
             qk_norm=qk_norm,
-            fused_attn=fused_attn,
-            rope=rope,
+            norm_layer=norm_layer,
+            freq_base=freq_base,
         )
         self.ls1 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
 
         self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = ffn_layer(
-            in_features=dim,
-            hidden_features=mlp_hidden_dim,
-            act_layer=act_layer,
-            drop=drop,
-            bias=ffn_bias,
-        )
+        hidden = int(dim * mlp_ratio)
+        self.mlp = Mlp(in_features=dim, hidden_features=hidden, act_layer=act_layer, bias=ffn_bias)
         self.ls2 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
 
-    def forward(self, x: Tensor, pos=None, attn_mask=None) -> Tensor:
-        x = x + self.ls1(self.attn(self.norm1(x), pos=pos, attn_mask=attn_mask))
-        x = x + self.ls2(self.mlp(self.norm2(x)))
-        return x
+    def forward(
+        self,
+        x: Tensor,
+        poses: Tensor,
+        image_h: int,
+        image_w: int,
+        patch_h: int,
+        patch_w: int,
+        Ks: Tensor | None = None,
+        connect: bool = False,
+        attn_mask: Tensor | None = None,
+    ) -> Tensor:
+        # poses are world->camera; invert to get camera->world extrinsics
+        extrinsics = se3_inverse(poses)
+        import pdb; pdb.set_trace()
+
+        def attn_residual(x: Tensor) -> Tensor:
+            return self.ls1(self.attn(self.norm1(x), extrinsics, image_h, image_w, patch_h, patch_w, Ks, attn_mask))
+
+        def ffn_residual(x: Tensor) -> Tensor:
+            return self.ls2(self.mlp(self.norm2(x)))
+
+        if connect:
+            return x + attn_residual(x) + ffn_residual(x)
+        return attn_residual(x) + ffn_residual(x)
 
 
 class CrossViewFusion(nn.Module):
@@ -83,10 +206,13 @@ class CrossViewFusion(nn.Module):
         proj_bias: bool = True,
         ffn_bias: bool = True,
         init_values: float = 0.01,
+        prope_layer_idx: tuple[int, ...] = (),
+        prope_freq_base: float = 100.0,
     ):
         super().__init__()
         self.aa_order = aa_order
         self.rope = RotaryPositionEmbedding2D(frequency=rope_freq) if rope_freq > 0 else None
+        self.prope_after_global = set(prope_layer_idx)
 
         self.frame_blocks = nn.ModuleList(
             [
@@ -123,17 +249,58 @@ class CrossViewFusion(nn.Module):
             ]
         )
 
-    def forward(self, tokens, mask=None, pos=None):
+        # PRoPE pose-injection blocks, one per entry in prope_layer_idx
+        if self.prope_after_global:
+            self.pose_inject_blocks = nn.ModuleList(
+                [
+                    PoseInjectBlock(
+                        dim=embed_dim,
+                        num_heads=num_heads,
+                        mlp_ratio=mlp_ratio,
+                        qkv_bias=qkv_bias,
+                        proj_bias=proj_bias,
+                        ffn_bias=ffn_bias,
+                        init_values=init_values,
+                        qk_norm=qk_norm,
+                        freq_base=prope_freq_base,
+                    )
+                    for _ in prope_layer_idx
+                ]
+            )
+
+    def forward(
+        self,
+        tokens,
+        mask=None,
+        pos=None,
+        poses: Tensor | None = None,
+        image_h: int = 0,
+        image_w: int = 0,
+        patch_h: int = 0,
+        patch_w: int = 0,
+        Ks: Tensor | None = None,
+    ):  
+        import pdb; pdb.set_trace()
         bsz, num_views, num_tokens, dim = tokens.shape
 
         frame_idx = 0
         global_idx = 0
+        pose_inject_idx = 0
         for attn_type in self.aa_order:
             if attn_type == "f":
                 tokens = self._process_frame_attention(tokens, bsz, num_views, num_tokens, dim, frame_idx, pos=pos, mask=mask)
                 frame_idx += 1
             elif attn_type == "g":
                 tokens = self._process_global_attention(tokens, bsz, num_views, num_tokens, dim, global_idx, pos=pos, mask=mask)
+                # Inject PRoPE after this global block if configured
+                if global_idx in self.prope_after_global and poses is not None:
+                    tokens = tokens.reshape(bsz, num_views, num_tokens, dim)
+                    pose_feat = self.pose_inject_blocks[pose_inject_idx](
+                        tokens.reshape(bsz, num_views * num_tokens, dim),
+                        poses, image_h, image_w, patch_h, patch_w, Ks=Ks,
+                    )
+                    tokens = tokens + pose_feat.reshape(bsz, num_views, num_tokens, dim)
+                    pose_inject_idx += 1
                 global_idx += 1
             else:
                 raise ValueError(f"Unknown attention type: {attn_type}")
@@ -217,7 +384,9 @@ class PaliGemmaWithExpertModel(nn.Module):
         vlm_config,
         action_expert_config,
         *,
-        pose_enc_type: Literal["null", "relative_pose", "absolute_pose"] = "null",
+        pose_enc_type: Literal["null", "relative_pose", "absolute_pose", "prope"] = "null",
+        ray_enc_type: bool = False,
+        view_enc_type: bool = False,
         cross_view_config: CrossViewFusionConfig = CrossViewFusionConfig(),
         use_adarms=None,
         precision: Literal["bfloat16", "float32"] = "bfloat16",
@@ -265,13 +434,17 @@ class PaliGemmaWithExpertModel(nn.Module):
 
         self.cross_view_config = cross_view_config
         self.pose_enc_type = pose_enc_type
+        self.ray_enc_type = ray_enc_type
+        self.view_enc_type = view_enc_type
         self.num_views = 3  # Pi-0: agent + wrist + wrist2
 
-        if self.cross_view_config.type != "none":
+        if view_enc_type:
             self.view_embedding = nn.Embedding(
                 num_embeddings=self.num_views,
                 embedding_dim=vlm_config_hf.vision_config.hidden_size,  # must match token dim D
             )
+
+        if self.cross_view_config.type != "none":
             self.position_getter = PositionGetter() if self.cross_view_config.rope_freq > 0 else None
 
             if self.cross_view_config.type == "standard":
@@ -283,6 +456,8 @@ class PaliGemmaWithExpertModel(nn.Module):
                     num_heads=self.cross_view_config.num_heads,
                     mlp_ratio=self.cross_view_config.mlp_ratio,
                     qk_norm=self.cross_view_config.qk_norm,
+                    prope_layer_idx=self.cross_view_config.prope_layer_idx if pose_enc_type == "prope" else (),
+                    prope_freq_base=self.cross_view_config.rope_freq,
                 )
             elif self.cross_view_config.type == "simple":
                 self.cross_view_fusion = SimpleCrossViewFusion(
@@ -292,8 +467,15 @@ class PaliGemmaWithExpertModel(nn.Module):
                 )
             else:
                 raise ValueError(f"Unsupported cross_view type: {self.cross_view_config.type}")
-        if pose_enc_type != "null":
+        if pose_enc_type in ("relative_pose", "absolute_pose"):
             self.cam_pose_encoder = CamPoseEncoder(vlm_config_hf.vision_config.hidden_size)
+
+        if ray_enc_type:
+            vision_patch_size = vlm_config_hf.vision_config.patch_size
+            vision_dim = vlm_config_hf.vision_config.hidden_size
+            self.ray_embed = PatchEmbed(patch_size=vision_patch_size, in_chans=2, embed_dim=vision_dim)
+            nn.init.constant_(self.ray_embed.proj.weight, 0)
+            nn.init.constant_(self.ray_embed.proj.bias, 0)
 
         self.to_bfloat16_for_selected_params(precision)
 
@@ -324,9 +506,11 @@ class PaliGemmaWithExpertModel(nn.Module):
         images: torch.Tensor,
         img_masks: torch.Tensor,
         cam_pos: dict | None = None,
+        cam_intr: dict | None = None,
         cam_keys: list | None = None,
     ):
         B, V, C, H, W = images.shape
+        device = images.device
 
         vision_tower = self.paligemma.model.vision_tower
         projector = self.paligemma.model.multi_modal_projector
@@ -336,7 +520,7 @@ class PaliGemmaWithExpertModel(nn.Module):
         P, D = tokens.shape[1], tokens.shape[2]
         tokens = tokens.reshape(B, V, P, D)
         masks = img_masks[:, :, None].expand(B, V, P).clone()
-
+        import pdb; pdb.set_trace()
         # -------- helpers --------
         def encode_pose(pose):
             R = pose[..., :3, :3]
@@ -350,8 +534,33 @@ class PaliGemmaWithExpertModel(nn.Module):
         def compute_rel_pose(agent_T, wrist_T):
             return torch.linalg.inv(agent_T) @ wrist_T  # (B,4,4)
 
+        def stack_per_cam(cam_map: dict | None, eye_dim: int) -> torch.Tensor | None:
+            """Stack a {cam_key: (B, D, D) | None} dict to (B, V, D, D) along cam_keys,
+            filling missing entries with identity. Returns None if cam_map is None."""
+            if cam_map is None:
+                return None
+            out = []
+            for cam_key in cam_keys:
+                T = cam_map.get(cam_key)
+                if T is None:
+                    T = torch.eye(eye_dim, device=device, dtype=tokens.dtype)[None].expand(B, -1, -1)
+                out.append(T)
+            return torch.stack(out, dim=1)
+
+        # -------- ray direction embedding (from intrinsics) --------
+        if self.ray_enc_type and cam_intr is not None:
+            # (B, V, 3, 3) — compute pixel grid, back-project, keep (x, y)
+            cam_intr_stacked = stack_per_cam(cam_intr, 3)
+            pix = torch.from_numpy(get_pixel(H, W).T.reshape(H, W, 3)).to(device=device, dtype=tokens.dtype)
+            pix = pix[None].expand(B, -1, -1, -1)  # (B, H, W, 3)
+            K_inv = torch.linalg.inv(cam_intr_stacked.float()).to(tokens.dtype)  # invert in fp32 for stability
+            rays = torch.einsum("bvij, bhwj -> bvhwi", K_inv, pix)[..., :2]  # (B, V, H, W, 2)
+            ray_emb = self.ray_embed(rays.reshape(B * V, H, W, 2).permute(0, 3, 1, 2))  # (B*V, P, D)
+            ray_emb = ray_emb.reshape(B, V, P, D)
+            tokens = tokens + ray_emb
+
         # --------- camera token injection ---------
-        if self.pose_enc_type != "null":
+        if self.pose_enc_type in ["relative_pose", "absolute_pose"]:
             cam_tokens = []
 
             if self.pose_enc_type == "relative_pose":
@@ -379,29 +588,52 @@ class PaliGemmaWithExpertModel(nn.Module):
             # ------ update the image masks ------
             pose_valid = img_masks[:, :, None]
             masks = torch.cat([pose_valid, masks], dim=-1)
+            
+        elif self.pose_enc_type == "prope" and self.cross_view_config.type != "none":
+            prope_poses = stack_per_cam(cam_pos, 4)  # (B, V, 4, 4)
 
-        # -------- cross-view fusion --------
-        if self.cross_view_config.type != "none":
+        # -------- view embedding --------
+        if self.view_enc_type:
             view_ids = torch.arange(V, device=tokens.device)
             view_embed = self.view_embedding(view_ids)
             tokens = tokens + view_embed[None, :, None, :]
 
+        # -------- cross-view fusion --------
+        if self.cross_view_config.type != "none":
             pos = None
             if self.cross_view_config.rope_freq > 0:
                 patch_size = vision_tower.config.patch_size
                 pos = self.position_getter(B * V, H // patch_size, W // patch_size, device=tokens.device)
-                num_special = 1 if self.pose_enc_type != "null" else 0
+                num_special = 1 if self.pose_enc_type not in ("null", "prope") else 0
                 if num_special >= 1:
                     pos = pos + 1
                     pos_special = torch.zeros(B * V, num_special, 2, device=tokens.device, dtype=pos.dtype)
                     pos = torch.cat([pos_special, pos], dim=1)
 
-            tokens = self.cross_view_fusion(tokens, mask=masks, pos=pos)
+            # Pass PRoPE args when pose_enc_type == "prope" (extrinsics only)
+            prope_kwargs = {}
+            if self.pose_enc_type == "prope":
+                patch_size = vision_tower.config.patch_size
+                prope_kwargs = dict(
+                    poses=prope_poses,
+                    image_h=H,
+                    image_w=W,
+                    patch_h=H // patch_size,
+                    patch_w=W // patch_size,
+                )
+
+            tokens = self.cross_view_fusion(tokens, mask=masks, pos=pos, **prope_kwargs)
+
+        # Post-fusion, pre-projector patch tokens for downstream auxiliary heads.
+        # Strip the leading cam_token (when pose_enc_type prepends one) so consumers
+        # see exactly patch_h*patch_w tokens.
+        num_special = 1 if self.pose_enc_type in ("relative_pose", "absolute_pose") else 0
+        fused_tokens = tokens[:, :, num_special:, :]  # (B, V, patch_h*patch_w, D)
 
         # -------- projector --------
         tokens = tokens.reshape(B * V, P, D)
         tokens = projector(tokens)
-        return tokens.reshape(B, V * P, -1), masks.reshape(B, V * P)
+        return tokens.reshape(B, V * P, -1), masks.reshape(B, V * P), fused_tokens
 
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.language_model.embed_tokens(tokens)

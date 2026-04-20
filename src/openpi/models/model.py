@@ -97,6 +97,8 @@ class Observation(Generic[ArrayT]):
     # ------ new optional field ------
     agent_extrinsic: at.Float[ArrayT, "*b 4 4"] | None = None
     wrist_extrinsic: at.Float[ArrayT, "*b 4 4"] | None = None
+    agent_intrinsic: at.Float[ArrayT, "*b 3 3"] | None = None
+    wrist_intrinsic: at.Float[ArrayT, "*b 3 3"] | None = None
 
     # Tokenized prompt.
     tokenized_prompt: at.Int[ArrayT, "*b l"] | None = None
@@ -128,6 +130,8 @@ class Observation(Generic[ArrayT]):
             state=data["state"],
             agent_extrinsic=data.get("agent_extrinsic"),  # ---- NEW ----
             wrist_extrinsic=data.get("wrist_extrinsic"),  # ---- NEW ----
+            agent_intrinsic=data.get("agent_intrinsic"),
+            wrist_intrinsic=data.get("wrist_intrinsic"),
             tokenized_prompt=data.get("tokenized_prompt"),
             tokenized_prompt_mask=data.get("tokenized_prompt_mask"),
             token_ar_mask=data.get("token_ar_mask"),

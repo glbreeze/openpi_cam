@@ -198,9 +198,12 @@ def _parse_lr_multipliers(raw_value: str | None) -> list[tuple[str, float]]:
     return multipliers
 
 
-def _matches_prefix(name: str, prefixes: list[str]) -> bool:
-    return any(name.startswith(prefix) for prefix in prefixes)
-
+def _matches_prefix(name: str, prefixes: list[str]) -> str | None:
+    for prefix in prefixes:
+        if prefix in name:
+            return prefix   # return FIRST match
+    return None
+        
 
 def apply_trainable_prefixes(model):
     trainable_prefixes = _parse_prefixes(os.environ.get("OPENPI_TRAINABLE_PREFIXES"))
@@ -211,16 +214,25 @@ def apply_trainable_prefixes(model):
     trainable_params = 0
     trainable_tensors = 0
     frozen_tensors = 0
+    trainable_modules = set()
 
     for name, param in get_model_named_parameters(model):
         total_params += param.numel()
-        should_train = _matches_prefix(name, trainable_prefixes)
+        matched_prefix = _matches_prefix(name, trainable_prefixes)
+        should_train = matched_prefix is not None
         param.requires_grad_(should_train)
         if should_train:
             trainable_params += param.numel()
             trainable_tensors += 1
+            
+            trainable_modules.add(matched_prefix)
         else:
             frozen_tensors += 1
+            
+    print("\n=== Trainable Modules ===")
+    for m in sorted(trainable_modules):
+        print(m)
+    print("=========================\n")
 
     if trainable_tensors == 0:
         raise ValueError(
@@ -620,6 +632,7 @@ def train_loop(config: _config.TrainConfig):
             "cross_view_fusion",
             "view_embedding",
             "cam_pose_encoder",
+            "ray_embed",
         ]
         for key in missing:
             if not any(name in key for name in allowed_missing):
@@ -628,7 +641,7 @@ def train_loop(config: _config.TrainConfig):
             logging.info(f"--- model loading ---- Missing keys (expected for new modules): {missing}")
         if unexpected:
             logging.warning(f"--- model loading ---- Unexpected keys in checkpoint: {unexpected}")
-
+    import pdb; pdb.set_trace()
     apply_trainable_prefixes(model)
 
     # Optimizer + learning rate schedule from config

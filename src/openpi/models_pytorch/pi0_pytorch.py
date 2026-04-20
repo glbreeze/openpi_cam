@@ -9,6 +9,7 @@ import torch.nn.functional as F  # noqa: N812
 
 import openpi.models.gemma as _gemma
 from openpi.models_pytorch.gemma_pytorch import PaliGemmaWithExpertModel
+from openpi.models_pytorch.layers.point_head import PointHead
 import openpi.models_pytorch.preprocessing_pytorch as _preprocessing
 
 
@@ -88,7 +89,7 @@ class PI0Pytorch(nn.Module):
         self.config = config
         self.pi05 = config.pi05
         self.pose_enc_type = config.pose_enc_type
-        self.cross_view_config = config.get_effective_cross_view()
+        self.cross_view_config = config.cross_view
         self.cross_view_fusion = self.cross_view_config.type != "none"
 
         paligemma_config = _gemma.get_config(config.paligemma_variant)
@@ -100,8 +101,24 @@ class PI0Pytorch(nn.Module):
             use_adarms=[False, True] if self.pi05 else [False, False],
             precision=config.dtype,
             pose_enc_type=config.pose_enc_type,
+            ray_enc_type=config.ray_enc_type,
+            view_enc_type=config.view_enc_type,
             cross_view_config=self.cross_view_config,
         )
+
+        self.aux_point_head = None
+        if config.aux_point_head.enabled:
+            ph_cfg = config.aux_point_head
+            self.aux_point_head = PointHead(
+                in_dim=ph_cfg.in_dim,
+                hidden_dim=ph_cfg.hidden_dim,
+                depth=ph_cfg.depth,
+                num_heads=ph_cfg.num_heads,
+                mlp_ratio=ph_cfg.mlp_ratio,
+                rope_freq=ph_cfg.rope_freq,
+                qk_norm=ph_cfg.qk_norm,
+                init_values=ph_cfg.init_values,
+            )
 
         self.action_in_proj = nn.Linear(32, action_expert_config.width)
         self.action_out_proj = nn.Linear(action_expert_config.width, 32)
@@ -206,11 +223,27 @@ class PI0Pytorch(nn.Module):
         time = time_beta * 0.999 + 0.001
         return time.to(dtype=torch.float32, device=device)
 
+    def auxiliary_head(self, fused_tokens):
+        """Run auxiliary distillation heads on post-fusion, pre-projector vision tokens.
+
+        fused_tokens: (B, V, patch_h*patch_w, D) in the backbone dtype.
+        Returns a dict of predictions (empty when no aux heads are enabled). Dict keys:
+            point: (xy, z) from the pi3x point head.
+        """
+        aux_out = {}
+        if self.aux_point_head is not None:
+            # Upcast — aux_point_head is float32 while fused_tokens are bfloat16.
+            aux_out["point"] = self.aux_point_head(fused_tokens.float())
+        return aux_out
+
     def embed_prefix(
         self, images, img_masks, lang_tokens, lang_masks, obs
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ):
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for PaliGemma transformer processing.
+
+        Returns (embs, pad_masks, att_masks, fused_tokens) — fused_tokens are the
+        post-cross-view-fusion, pre-projector patch tokens (B, V, patch_h*patch_w, D).
         """
         if isinstance(images, list):
             images = torch.stack(images, dim=1)
@@ -222,17 +255,25 @@ class PI0Pytorch(nn.Module):
         att_masks = []
 
         cam_keys = [name.split("_0_rgb")[0] for name in obs.images]
+
+        # Per-camera extrinsics/intrinsics as dicts keyed by cam name. embed_image
+        # stacks these to (B, V, 4, 4)/(B, V, 3, 3) with identity fallback as needed.
+        cam_pos = None
         if self.pose_enc_type != "null":
             cam_pos = {"base": obs.agent_extrinsic, "left_wrist": obs.wrist_extrinsic, "right_wrist": None}
-        else:
-            cam_pos = None
+
+        cam_intr = None
+        if obs.agent_intrinsic is not None or obs.wrist_intrinsic is not None:
+            cam_intr = {"base": obs.agent_intrinsic, "left_wrist": obs.wrist_intrinsic, "right_wrist": None}
 
         # -------------- Process images (vision_tower + multi_modal_projector) --------------
-        def image_embed_func(images, img_masks, cam_pos):
-            return self.paligemma_with_expert.embed_image(images, img_masks, cam_pos=cam_pos, cam_keys=cam_keys)
+        def image_embed_func(images, img_masks, cam_pos, cam_intr):
+            return self.paligemma_with_expert.embed_image(
+                images, img_masks, cam_pos=cam_pos, cam_intr=cam_intr, cam_keys=cam_keys,
+            )
 
-        img_emb, img_masks = self._apply_checkpoint(
-            image_embed_func, images, img_masks, cam_pos
+        img_emb, img_masks, fused_tokens = self._apply_checkpoint(
+            image_embed_func, images, img_masks, cam_pos, cam_intr
         )  # [B, 256, 2048] here just img for one cam
 
         embs.append(img_emb)
@@ -262,7 +303,7 @@ class PI0Pytorch(nn.Module):
         bsize = pad_masks.shape[0]
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
-        return embs, pad_masks, att_masks
+        return embs, pad_masks, att_masks, fused_tokens
 
     def embed_suffix(self, state, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
@@ -365,11 +406,11 @@ class PI0Pytorch(nn.Module):
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        # import pdb; pdb.set_trace()
+        import pdb; pdb.set_trace()
         images = torch.stack(images, dim=1)  # [B, V, 3, 224, 224]
         img_masks = torch.stack(img_masks, dim=1)  # [B, V]
         # ----------------- embed img + language  -----------------
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+        prefix_embs, prefix_pad_masks, prefix_att_masks, fused_tokens = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, obs=observation
         )
 
@@ -416,7 +457,18 @@ class PI0Pytorch(nn.Module):
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
 
-        return F.mse_loss(u_t, v_t, reduction="none")
+        loss = F.mse_loss(u_t, v_t, reduction="none")
+
+        aux_pred = self.auxiliary_head(fused_tokens)
+        if "point" in aux_pred:
+            xy_pred, z_pred = aux_pred["point"]
+            w = self.config.aux_point_head.loss_weight
+            # TODO: replace with `w * mse(pred, pi3x_teacher_targets)`. Until teacher
+            # targets are wired, use a zero-contribution term that still exercises the
+            # weight path and keeps head params in the autograd graph for DDP.
+            loss = loss + w * 0.0 * (xy_pred.sum() + z_pred.sum())
+
+        return loss
 
     @torch.no_grad()
     def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
@@ -428,7 +480,7 @@ class PI0Pytorch(nn.Module):
 
         images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+        prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, observation
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)

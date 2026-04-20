@@ -10,3 +10,6 @@ class CrossViewFusionConfig:
     qk_norm: bool = True
     rope_freq: int = 100  # <= 0 disables RoPE.
     init_values: float = 0.01
+    # Indices (into the "g" sub-sequence of aa_order) after which a PRoPE block
+    # is inserted when pose_enc_type == "prope". Empty list disables.
+    prope_layer_idx: tuple[int, ...] = ()

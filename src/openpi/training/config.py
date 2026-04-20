@@ -329,6 +329,8 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
                 {
                     "observation/agent_extrinsic": "agent_extrinsic",
                     "observation/wrist_extrinsic": "wrist_extrinsic",
+                    "observation/agent_intrinsic": "agent_intrinsic",
+                    "observation/wrist_intrinsic": "wrist_intrinsic",
                 }
             )
 
