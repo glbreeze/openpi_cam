@@ -8,7 +8,8 @@ source /home/asus/Research/openpi/.venv/bin/activate
 #   --local-dir ~/Research/datasets/libero_plus_rlds \
 #   > libero_download.log 2>&1 &
 
-
+                                                                                                                                                                                                                                                                     
+cd /home/asus/Research/datasets/libero_cam_rlds && mv libero_10 libero_10_no_noops && mv libero_goal libero_goal_no_noops && mv libero_object libero_object_no_noops && mv libero_spatial libero_spatial_no_noops && ls
 # Convert data to a LeRobot dataset 
 export HF_HOME=/home/asus/Research/datasets/huggingface
 nohup python examples/libero/convert_libero_data_to_lerobot.py --data_dir /home/asus/Research/datasets/libero_cam_rlds \
@@ -17,6 +18,9 @@ nohup python examples/libero/convert_libero_data_to_lerobot.py --data_dir /home/
 nohup python examples/libero/convert_libero_data_to_lerobot.py --data_dir /home/asus/Research/datasets/modified_libero_rlds \
   --repo-name glbreeze/libero > libero_to_lerobot_base.out 2>&1 &
 # modified_libero_rlds | libero_mix | libero_cam_rlds
+
+# compare the data 
+ uv run scripts/compare_lerobot_datasets.py <dir_a> <dir_b> [--sample-buckets N]    
 
 # Compute the normalization statistics for the training data
 # go to "src/openpi/training/config.py" and change repo_id to repo_id='glbreeze/libero_cam'
@@ -36,15 +40,31 @@ python scripts/train_pytorch.py pi0_libero --exp_name test_run \
   --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base --batch_size 8 \
   --data.repo_id glbreeze/libero
 
-  
+
+# data is libero_cam_abs 
+
+export OPENPI_TRAINABLE_PREFIXES="paligemma_with_expert.cross_view_fusion,paligemma_with_expert.cam_pose_encoder,paligemma_with_expert.view_embedding"
+python scripts/train_pytorch.py pi0_libero_cam \
+  --exp_name test_run \
+  --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base --batch_size 8 \
+  --data.repo_id glbreeze/libero_cam_abs \
+  --model.pose_enc_type absolute_pose --model.cross_view.type simple
 
 
 python scripts/train_pytorch.py pi0_libero_cam \
   --exp_name test_run \
   --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base --batch_size 8 \
   --data.repo_id glbreeze/libero_cam \
-  --model.pose_enc_type absolute_pose --model.cross_view.type simple
+  --model.pose_enc_type prope --model.cross_view.type standard  --ray_enc_type 
 
+
+# code according to pi3x
+
+python scripts/train_pytorch.py pi0_libero_cam --exp_name test_run \
+  --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base \
+  --batch_size 8 --data.repo_id glbreeze/libero_cam \
+  --model.pose_enc_type prope --model.cross_view.type standard --model.ray_enc_type  \
+  --model.cross_view.prope_layer_idx 0 1
 
 
 # Example:
