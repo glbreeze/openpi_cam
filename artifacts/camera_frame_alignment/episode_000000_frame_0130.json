@@ -1,0 +1,61 @@
+{
+  "episode_index": 0,
+  "task_index": 0,
+  "frame_index": 130,
+  "selection_score": 0.211641,
+  "world_action_xyz": [
+    0.3161,
+    0.0723,
+    0.4313
+  ],
+  "world_action_rotvec": [
+    0.0,
+    0.1768,
+    -0.0632
+  ],
+  "current_camera_action_xyz": [
+    0.0723,
+    0.1989,
+    0.4963
+  ],
+  "current_camera_action_rotvec": [
+    0.1768,
+    -0.0537,
+    -0.0334
+  ],
+  "stored_agentcam_action_xyz": [
+    0.0723,
+    0.1989,
+    0.4963
+  ],
+  "stored_agentcam_action_rotvec": [
+    0.1768,
+    -0.0537,
+    -0.0334
+  ],
+  "corrected_camera_action_xyz": [
+    -0.0723,
+    -0.1989,
+    0.4963
+  ],
+  "corrected_camera_action_rotvec": [
+    -0.1768,
+    0.0537,
+    -0.0334
+  ],
+  "current_camera_state_xyz": [
+    0.228,
+    0.0749,
+    -1.044
+  ],
+  "corrected_camera_state_xyz": [
+    -0.228,
+    -0.0749,
+    -1.044
+  ],
+  "current_vs_stored_max_abs_diff": 3e-08,
+  "xy_sign_flip": {
+    "x": true,
+    "y": true
+  }
+}

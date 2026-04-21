@@ -30,6 +30,7 @@ from lerobot.common.datasets.lerobot_dataset import HF_LEROBOT_HOME
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 import numpy as np
 from openpi_client import image_tools
+from scipy.spatial.transform import Rotation
 import tyro
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -229,6 +230,38 @@ def _get_camera_extrinsic(env, camera_name: str) -> np.ndarray:
     return extrinsic
 
 
+def _rotvec_to_matrix(rotvec: np.ndarray) -> np.ndarray:
+    leading_shape = rotvec.shape[:-1]
+    return Rotation.from_rotvec(rotvec.reshape(-1, 3)).as_matrix().reshape(*leading_shape, 3, 3)
+
+
+def _matrix_to_rotvec(matrix: np.ndarray) -> np.ndarray:
+    leading_shape = matrix.shape[:-2]
+    return Rotation.from_matrix(matrix.reshape(-1, 3, 3)).as_rotvec().reshape(*leading_shape, 3)
+
+
+def _transform_state_action_to_agent_camera(
+    state: np.ndarray,
+    action: np.ndarray,
+    agent_extrinsic: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Store proprio/action in the agent camera frame while keeping gripper dims unchanged."""
+    state = np.asarray(state, dtype=np.float32)
+    action = np.asarray(action, dtype=np.float32)
+    rotation_wc = agent_extrinsic[:3, :3]
+    rotation_cw = rotation_wc.T
+    translation_wc = agent_extrinsic[:3, 3]
+
+    state_cam = state.copy()
+    state_cam[:3] = rotation_cw @ (state[:3] - translation_wc)
+    state_cam[3:6] = _matrix_to_rotvec(rotation_cw @ _rotvec_to_matrix(state[3:6]))
+
+    action_cam = action.copy()
+    action_cam[:3] = rotation_cw @ action[:3]
+    action_cam[3:6] = _matrix_to_rotvec(rotation_cw @ _rotvec_to_matrix(action[3:6]) @ rotation_wc)
+    return state_cam.astype(np.float32), action_cam.astype(np.float32)
+
+
 def _load_episode_model(env, model_xml: str) -> None:
     reset_success = False
     while not reset_success:
@@ -411,6 +444,7 @@ def main(
     push_to_hub: bool = False,
     image_writer_threads: int = 10,
     image_writer_processes: int = 5,
+    action_frame: Literal["world", "agent_camera"] = "world",
 ):
     dataset_root_path = pathlib.Path(dataset_root).expanduser().resolve()
     if not dataset_root_path.exists():
@@ -458,7 +492,8 @@ def main(
     print(
         f"[convert] repo_id={output_repo_id} mode={mode} shard_index={shard_index}/{num_shards} "
         f"selected_files={len(selected_files)} include_camera_labels={sorted(include_label_set) if include_label_set else None} "
-        f"exclude_camera_labels={sorted(exclude_label_set) if exclude_label_set else None}"
+        f"exclude_camera_labels={sorted(exclude_label_set) if exclude_label_set else None} "
+        f"action_frame={action_frame}"
     )
 
     for hdf5_path in selected_files:
@@ -504,12 +539,23 @@ def main(
                     _load_episode_model(env, model_xml=model_xml)
                     for frame_index in range(frame_count):
                         agent_extrinsic, wrist_extrinsic = _set_env_state(env, states[frame_index])
+                        frame_state = state[frame_index]
+                        frame_action = actions[frame_index]
+                        if action_frame == "agent_camera":
+                            frame_state, frame_action = _transform_state_action_to_agent_camera(
+                                frame_state,
+                                frame_action,
+                                agent_extrinsic,
+                            )
+                        elif action_frame != "world":
+                            raise ValueError(f"Unsupported action_frame: {action_frame}")
+
                         dataset.add_frame(
                             {
                                 "image": _preprocess_image(agent_images[frame_index], image_size),
                                 "wrist_image": _preprocess_image(wrist_images[frame_index], image_size),
-                                "state": state[frame_index],
-                                "actions": actions[frame_index],
+                                "state": frame_state,
+                                "actions": frame_action,
                                 "agent_extrinsic": agent_extrinsic,
                                 "wrist_extrinsic": wrist_extrinsic,
                                 "task": task,

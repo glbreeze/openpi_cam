@@ -305,6 +305,10 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
 
     extra_delta_transform: bool = False
     include_cam_extrinsics: bool = False
+    state_frame: Literal["world", "agent_camera"] = "world"
+    action_frame: Literal["world", "agent_camera"] = "world"
+    preconverted_state_frame: bool = False
+    preconverted_action_frame: bool = False
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -341,8 +345,16 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         # how to modify the transforms to match your dataset. Once you created your own transforms, you can
         # replace the transforms below with your own.
         data_transforms = _transforms.Group(
-            inputs=[libero_policy.LiberoInputs(model_type=model_config.model_type)],
-            outputs=[libero_policy.LiberoOutputs()],
+            inputs=[
+                libero_policy.LiberoInputs(
+                    model_type=model_config.model_type,
+                    state_frame=self.state_frame,
+                    action_frame=self.action_frame,
+                    preconverted_state_frame=self.preconverted_state_frame,
+                    preconverted_action_frame=self.preconverted_action_frame,
+                )
+            ],
+            outputs=[libero_policy.LiberoOutputs(action_frame=self.action_frame)],
         )
 
         # One additional data transform: pi0 models are trained on delta actions (relative to the first
@@ -690,6 +702,113 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
             include_cam_extrinsics=True,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_relative_pose_finetune",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="relative_pose",
+            cross_view=cross_view_config.CrossViewFusionConfig(type="simple"),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_cam",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_cam",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_full_finetune_nocross",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="absolute_pose",
+            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_cam",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_cam",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi0_libero_object_cam_pytorch_relative_pose_agentcam_action_finetune",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="relative_pose",
+            cross_view=cross_view_config.CrossViewFusionConfig(type="simple"),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_train_o00_02_03_05_06_09_10_agentcam_action",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_train_o00_02_03_05_06_09_10_agentcam_action",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            state_frame="agent_camera",
+            action_frame="agent_camera",
+            preconverted_state_frame=True,
+            preconverted_action_frame=True,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi0_libero_object_cam_pytorch_relative_pose_agentcam_action_nocross_finetune",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="relative_pose",
+            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_train_o00_02_03_05_06_09_10_agentcam_action",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_train_o00_02_03_05_06_09_10_agentcam_action",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            state_frame="agent_camera",
+            action_frame="agent_camera",
+            preconverted_state_frame=True,
+            preconverted_action_frame=True,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi0_libero_object_cam_pytorch_absolute_pose_agentcam_action_worldstate_nocross_finetune",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="absolute_pose",
+            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_train_o00_02_03_05_06_09_10",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_train_o00_02_03_05_06_09_10_abspose_agentcam_action_worldstate",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            state_frame="world",
+            action_frame="agent_camera",
+            preconverted_state_frame=False,
+            preconverted_action_frame=False,
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,

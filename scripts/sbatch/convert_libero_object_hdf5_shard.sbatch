@@ -57,6 +57,7 @@ CONVERT_FPS=${CONVERT_FPS:-10}
 CONVERT_IMAGE_SIZE=${CONVERT_IMAGE_SIZE:-256}
 IMAGE_WRITER_THREADS=${IMAGE_WRITER_THREADS:-4}
 IMAGE_WRITER_PROCESSES=${IMAGE_WRITER_PROCESSES:-2}
+ACTION_FRAME=${ACTION_FRAME:-world}
 STAGE_FILES_TO_LOCAL=${STAGE_FILES_TO_LOCAL:-true}
 CACHE_ROOT=${CACHE_ROOT:-${GEO_ROOT}/.cache/huggingface}
 OPENPI_CACHE_ROOT=${OPENPI_CACHE_ROOT:-${GEO_ROOT}/.cache/openpi}
@@ -103,6 +104,7 @@ echo "include camera labels: ${INCLUDE_CAMERA_LABELS:-<none>}"
 echo "exclude camera labels: ${EXCLUDE_CAMERA_LABELS:-<none>}"
 echo "image writer threads: ${IMAGE_WRITER_THREADS}"
 echo "image writer processes: ${IMAGE_WRITER_PROCESSES}"
+echo "action frame: ${ACTION_FRAME}"
 echo "stage files to local: ${STAGE_FILES_TO_LOCAL}"
 echo "hf lerobot home: ${HF_LEROBOT_HOME}"
 which python
@@ -126,6 +128,7 @@ CONVERT_ARGS=(
   --image-size "${CONVERT_IMAGE_SIZE}"
   --image-writer-threads "${IMAGE_WRITER_THREADS}"
   --image-writer-processes "${IMAGE_WRITER_PROCESSES}"
+  --action-frame "${ACTION_FRAME}"
   --num-shards "${NUM_SHARDS}"
   --shard-index "${SHARD_INDEX}"
   "${stage_flag}"

@@ -90,6 +90,12 @@ if [[ "${USE_CAM}" == "true" ]]; then
       pi0_libero_cam_pytorch_full_finetune)
         CROSS_VIEW_TYPE="simple"
         ;;
+      pi0_libero_cam_pytorch_relative_pose_finetune)
+        CROSS_VIEW_TYPE="simple"
+        ;;
+      pi0_libero_object_cam_pytorch_relative_pose_agentcam_action_finetune)
+        CROSS_VIEW_TYPE="simple"
+        ;;
       pi0_libero_cam_pytorch_full_finetune_standard)
         CROSS_VIEW_TYPE="standard"
         ;;
@@ -103,7 +109,7 @@ else
 fi
 
 if [[ "${TRAIN_RECIPE}" == "auto" ]]; then
-  if [[ "${USE_CAM}" == "true" && "${CONFIG_NAME}" == "pi0_libero_cam_pytorch_full_finetune" && "${CROSS_VIEW_TYPE}" == "simple" ]]; then
+  if [[ "${USE_CAM}" == "true" && ( "${CONFIG_NAME}" == "pi0_libero_cam_pytorch_full_finetune" || "${CONFIG_NAME}" == "pi0_libero_cam_pytorch_relative_pose_finetune" || "${CONFIG_NAME}" == "pi0_libero_object_cam_pytorch_relative_pose_agentcam_action_finetune" ) && "${CROSS_VIEW_TYPE}" == "simple" ]]; then
     TRAIN_RECIPE="simple_two_stage"
   else
     TRAIN_RECIPE="single_stage"

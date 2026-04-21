@@ -128,6 +128,7 @@ CAMERA_VARIATION_COUNT=${CAMERA_VARIATION_COUNT:-4}
 CAMERA_VARIATION_SEED=${CAMERA_VARIATION_SEED:-0}
 CAMERA_VARIATION_INCLUDE_ORIGINAL=${CAMERA_VARIATION_INCLUDE_ORIGINAL:-true}
 CAMERA_VARIATION_TARGET_CAMERA=${CAMERA_VARIATION_TARGET_CAMERA:-agentview}
+SAVE_VIDEOS=${SAVE_VIDEOS:-false}
 
 PORT_BASE=${PORT_BASE:-19200}
 PORT=${PORT:-${PORT_BASE}}
@@ -209,6 +210,7 @@ echo "camera variation config: ${CAMERA_VARIATION_CONFIG}"
 echo "camera variation count: ${CAMERA_VARIATION_COUNT}"
 echo "camera variation include original: ${CAMERA_VARIATION_INCLUDE_ORIGINAL}"
 echo "camera target camera: ${CAMERA_VARIATION_TARGET_CAMERA}"
+echo "save videos: ${SAVE_VIDEOS}"
 echo "server batch max size: ${SERVER_BATCH_MAX_SIZE}"
 echo "port: ${PORT}"
 echo "summary root: ${SHARD_SUMMARY_ROOT}"
@@ -292,6 +294,20 @@ case "${CAMERA_VARIATION_INCLUDE_ORIGINAL}" in
     ;;
 esac
 
+save_videos_flag=()
+case "${SAVE_VIDEOS}" in
+  true|TRUE|True|1|yes|YES|Yes)
+    save_videos_flag=(--args.save-videos)
+    ;;
+  false|FALSE|False|0|no|NO|No)
+    save_videos_flag=()
+    ;;
+  *)
+    echo "Unsupported SAVE_VIDEOS value: ${SAVE_VIDEOS}" >&2
+    exit 1
+    ;;
+esac
+
 CLIENT_PIDS=()
 client_rc=0
 for client_idx in $(seq 0 $((NUM_PARALLEL_CLIENTS - 1))); do
@@ -324,6 +340,7 @@ for client_idx in $(seq 0 $((NUM_PARALLEL_CLIENTS - 1))); do
     --args.camera-variation-seed "${CAMERA_VARIATION_SEED}" \
     "${camera_include_original_flag[@]}" \
     --args.camera-variation-target-camera "${CAMERA_VARIATION_TARGET_CAMERA}" \
+    "${save_videos_flag[@]}" \
     --args.video-out-path "${client_video_out}" \
     --args.summary-out-path "${shard_summary}" &
   CLIENT_PIDS+=("$!")

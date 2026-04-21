@@ -144,6 +144,9 @@ class Policy(BasePolicy):
             "state": inputs["state"],
             "actions": actions,
         }
+        for context_key in ("agent_extrinsic", "wrist_extrinsic"):
+            if context_key in inputs:
+                outputs[context_key] = inputs[context_key]
         postprocess_start = time.monotonic()
         if self._is_pytorch_model:
             outputs = jax.tree.map(lambda x: np.asarray(x.detach().cpu()), outputs)

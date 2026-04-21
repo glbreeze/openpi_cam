@@ -423,22 +423,6 @@ def load_checkpoint(model, optimizer, checkpoint_dir, device):
         gc.collect()
         log_memory_usage(device, latest_step, "after_loading_model")
 
-        # Load optimizer state with error handling
-        logging.info("Loading optimizer state...")
-        optimizer_path = ckpt_dir / "optimizer.pt"
-
-        if optimizer_path.exists():
-            optimizer_state_dict = torch.load(optimizer_path, map_location=device, weights_only=False)
-            logging.info("Loaded optimizer state from pt format")
-        else:
-            raise FileNotFoundError(f"No optimizer checkpoint found at {ckpt_dir}")
-
-        optimizer.load_state_dict(optimizer_state_dict)
-        del optimizer_state_dict
-        torch.cuda.empty_cache()
-        gc.collect()
-        log_memory_usage(device, latest_step, "after_loading_optimizer")
-
         # Load metadata
         logging.info("Loading metadata...")
         metadata = torch.load(ckpt_dir / "metadata.pt", map_location=device, weights_only=False)
@@ -447,6 +431,28 @@ def load_checkpoint(model, optimizer, checkpoint_dir, device):
         torch.cuda.empty_cache()
         gc.collect()
         log_memory_usage(device, latest_step, "after_loading_metadata")
+
+        # Load optimizer state with error handling. Some archived checkpoints keep
+        # only model weights and metadata; allow opt-in continuation with a fresh
+        # optimizer when we intentionally change the follow-up schedule.
+        logging.info("Loading optimizer state...")
+        optimizer_path = ckpt_dir / "optimizer.pt"
+
+        if optimizer_path.exists():
+            optimizer_state_dict = torch.load(optimizer_path, map_location=device, weights_only=False)
+            optimizer.load_state_dict(optimizer_state_dict)
+            del optimizer_state_dict
+            logging.info("Loaded optimizer state from pt format")
+            torch.cuda.empty_cache()
+            gc.collect()
+            log_memory_usage(device, latest_step, "after_loading_optimizer")
+        elif os.getenv("OPENPI_RESUME_MODEL_ONLY", "").lower() in {"1", "true", "yes"}:
+            logging.warning(
+                "No optimizer checkpoint found at %s; continuing from model weights with a fresh optimizer.",
+                ckpt_dir,
+            )
+        else:
+            raise FileNotFoundError(f"No optimizer checkpoint found at {ckpt_dir}")
 
         logging.info(f"Successfully loaded all checkpoint components from step {latest_step}")
         return global_step
