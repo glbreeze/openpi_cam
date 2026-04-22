@@ -43,7 +43,7 @@ python scripts/train_pytorch.py pi0_libero --exp_name test_run \
 
 # data is libero_cam_abs 
 
-export OPENPI_TRAINABLE_PREFIXES="paligemma_with_expert.cross_view_fusion,paligemma_with_expert.cam_pose_encoder,paligemma_with_expert.view_embedding"
+export OPENPI_TRAINABLE_PREFIXES="paligemma_with_expert.cross_view_fusion,paligemma_with_expert.cam_pose_encoder,paligemma_with_expert.view_embedding,paligemma_with_expert.ray_embed"
 python scripts/train_pytorch.py pi0_libero_cam \
   --exp_name test_run \
   --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base --batch_size 8 \
@@ -55,7 +55,8 @@ python scripts/train_pytorch.py pi0_libero_cam \
   --exp_name test_run \
   --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base --batch_size 8 \
   --data.repo_id glbreeze/libero_cam \
-  --model.pose_enc_type prope --model.cross_view.type standard  --ray_enc_type 
+  --model.pose_enc_type prope --model.cross_view.type standard \
+  --model.ray_enc_type --model.view_enc_type
 
 
 # code according to pi3x
@@ -63,8 +64,14 @@ python scripts/train_pytorch.py pi0_libero_cam \
 python scripts/train_pytorch.py pi0_libero_cam --exp_name test_run \
   --pytorch_weight_path /home/asus/Research/openpi/ckpt/pytorch/pi0_base \
   --batch_size 8 --data.repo_id glbreeze/libero_cam \
-  --model.pose_enc_type prope --model.cross_view.type standard --model.ray_enc_type  \
-  --model.cross_view.prope_layer_idx 0 1
+  --model.pose_enc_type prope --model.cross_view.type standard \
+  --model.ray_enc_type --model.view_enc_type \
+  --model.cross_view.prope_layer_idx 0
+# NOTE: aa_order defaults to "fg" (one frame + one global block), so only
+# prope_layer_idx=0 is valid. To inject PRoPE after more than one global
+# block, also set --model.cross_view.aa_order "fgfg" (or similar) to add
+# matching 'g' blocks. The `CrossViewFusion.__init__` guard in
+# gemma_pytorch.py will error out at startup if these disagree.
 
 
 # Example:

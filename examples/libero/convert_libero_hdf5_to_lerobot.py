@@ -3,16 +3,22 @@
 This script bypasses the TFDS / RLDS conversion path and reads LIBERO-Camera
 HDF5 files produced by the camera-variation pipeline directly.
 
-Expected input mapping:
-  obs/agentview_rgb -> image
-  obs/eye_in_hand_rgb -> wrist_image
+Expected input mapping (per-episode under /data/<episode>/obs):
+  obs/agentview_rgb                -> image
+  obs/eye_in_hand_rgb              -> wrist_image
+  obs/agent_extrinsic  (T, 4, 4)   -> agent_extrinsic   (raw camera-to-world)
+  obs/wrist_extrinsic  (T, 4, 4)   -> wrist_extrinsic
+  obs.attrs["agent_intrinsic"] (3,3) -> agent_intrinsic (scaled to LeRobot image_size)
+  obs.attrs["wrist_intrinsic"] (3,3) -> wrist_intrinsic
+  obs.attrs["agent_image_size"] (H,W) -> reference resolution for K, used for scaling
   concat(obs/ee_states, obs/gripper_states) -> state
-  actions -> actions
+  actions                          -> actions
   problem_info.language_instruction -> task
 
-Camera extrinsics are recomputed per frame from the MuJoCo runtime state so that:
-  - agentview reflects camera-variation XML changes
-  - robot0_eye_in_hand changes with robot motion
+K is scaled from the HDF5-native resolution (128 for LIBERO) to the LeRobot
+output resolution (default 256) so downstream consumers receive K that matches
+the stored image pixels. Extrinsics are stored raw (camera-to-world); any
+image-flip convention correction is the model-side code's responsibility.
 """
 
 from __future__ import annotations
@@ -22,7 +28,6 @@ import os
 import pathlib
 import re
 import shutil
-import sys
 from typing import Literal
 
 import h5py
@@ -32,55 +37,7 @@ import numpy as np
 from openpi_client import image_tools
 import tyro
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-GEO_ROOT = REPO_ROOT.parent
-THIRD_PARTY_LIBERO = REPO_ROOT / "third_party" / "libero"
-THIRD_PARTY_LIBERO_ROOT = THIRD_PARTY_LIBERO / "libero" / "libero"
-_TASK_MAPPING = None
-_LIBERO_UTILS = None
-_ROBOSUITE_ASSETS_ROOT = None
 _CAMVAR_PATH_RE = re.compile(r"_camvar_(?P<id>\d+)(?:_[A-Za-z0-9-]+)?\.hdf5$")
-
-
-def _ensure_libero_setup():
-    global _TASK_MAPPING, _LIBERO_UTILS, _ROBOSUITE_ASSETS_ROOT
-
-    if _TASK_MAPPING is not None and _LIBERO_UTILS is not None and _ROBOSUITE_ASSETS_ROOT is not None:
-        return _TASK_MAPPING, _LIBERO_UTILS
-
-    if str(THIRD_PARTY_LIBERO) not in sys.path:
-        sys.path.insert(0, str(THIRD_PARTY_LIBERO))
-
-    if "LIBERO_CONFIG_PATH" not in os.environ:
-        default_libero_config = pathlib.Path.home() / ".libero_openpi_cam"
-        os.environ["LIBERO_CONFIG_PATH"] = str(default_libero_config)
-    else:
-        default_libero_config = pathlib.Path(os.environ["LIBERO_CONFIG_PATH"])
-
-    default_libero_config.mkdir(parents=True, exist_ok=True)
-    libero_config_file = default_libero_config / "config.yaml"
-    if not libero_config_file.exists():
-        libero_config_file.write_text(
-            "\n".join(
-                [
-                    f"benchmark_root: {THIRD_PARTY_LIBERO_ROOT}",
-                    f"bddl_files: {THIRD_PARTY_LIBERO_ROOT / 'bddl_files'}",
-                    f"init_states: {THIRD_PARTY_LIBERO_ROOT / 'init_files'}",
-                    f"datasets: {GEO_ROOT / 'libero_cam_rlds'}",
-                    f"assets: {THIRD_PARTY_LIBERO_ROOT / 'assets'}",
-                ]
-            )
-            + "\n"
-        )
-
-    from libero.libero.envs import TASK_MAPPING  # noqa: PLC0415
-    from libero.libero.utils import utils as libero_utils  # noqa: PLC0415
-    import robosuite  # noqa: PLC0415
-
-    _TASK_MAPPING = TASK_MAPPING
-    _LIBERO_UTILS = libero_utils
-    _ROBOSUITE_ASSETS_ROOT = pathlib.Path(robosuite.__file__).resolve().parent / "models" / "assets"
-    return _TASK_MAPPING, _LIBERO_UTILS
 
 
 def _as_text(value) -> str:
@@ -105,159 +62,69 @@ def _normalize_task(problem_info: dict) -> str:
     raise TypeError(f"Unsupported language_instruction type: {type(task)!r}")
 
 
-def _resolve_libero_path(raw_path: str) -> str:
-    normalized = _as_text(raw_path).strip()
-    if not normalized:
-        return normalized
-
-    candidate = pathlib.Path(normalized).expanduser()
-    if candidate.exists():
-        return str(candidate.resolve())
-
-    posix_path = pathlib.PurePosixPath(normalized.replace("\\", "/"))
-    parts = posix_path.parts
-    fallback_candidates: list[pathlib.Path] = []
-
-    for anchor in ("bddl_files", "init_files", "assets"):
-        if anchor in parts:
-            anchor_index = parts.index(anchor)
-            fallback_candidates.append(THIRD_PARTY_LIBERO_ROOT / pathlib.Path(*parts[anchor_index:]))
-
-    if len(parts) >= 2 and parts[0] == "libero" and parts[1] == "libero":
-        fallback_candidates.append(THIRD_PARTY_LIBERO_ROOT / pathlib.Path(*parts[2:]))
-    elif parts and parts[0] == "libero":
-        fallback_candidates.append(THIRD_PARTY_LIBERO / pathlib.Path(*parts[1:]))
-
-    fallback_candidates.append(THIRD_PARTY_LIBERO_ROOT / pathlib.Path(*parts))
-
-    for fallback in fallback_candidates:
-        if fallback.exists():
-            return str(fallback.resolve())
-
-    return normalized
-
-
-def _build_env_from_data_group(data_group: h5py.Group):
-    task_mapping, libero_utils = _ensure_libero_setup()
-    env_kwargs = None
-    problem_name = None
-
-    if data_group.attrs.get("env_info") not in (None, ""):
-        env_kwargs = _load_json_attr(data_group.attrs, "env_info")
-
-    if data_group.attrs.get("problem_info") not in (None, ""):
-        problem_info = _load_json_attr(data_group.attrs, "problem_info")
-        problem_name = problem_info.get("problem_name")
-
-    if env_kwargs is None or problem_name is None:
-        env_args = _load_json_attr(data_group.attrs, "env_args")
-        if env_kwargs is None:
-            env_kwargs = env_args["env_kwargs"]
-        if problem_name is None:
-            problem_name = env_args["problem_name"]
-
-    bddl_file_name = _as_text(data_group.attrs.get("bddl_file_name"))
-    if not bddl_file_name:
-        env_args = _load_json_attr(data_group.attrs, "env_args")
-        bddl_file_name = env_args["bddl_file"]
-    bddl_file_name = _resolve_libero_path(bddl_file_name)
-
-    libero_utils.update_env_kwargs(
-        env_kwargs,
-        bddl_file_name=bddl_file_name,
-        has_renderer=False,
-        has_offscreen_renderer=False,
-        use_camera_obs=False,
-        camera_depths=False,
-        reward_shaping=True,
-        control_freq=20,
-        ignore_done=True,
-    )
-    return task_mapping[problem_name](**env_kwargs)
-
-
-def _resolve_model_asset_path(raw_path: str) -> str:
-    _ensure_libero_setup()
-
-    normalized = _as_text(raw_path).strip()
-    if not normalized:
-        return normalized
-
-    candidate = pathlib.Path(normalized).expanduser()
-    if candidate.exists():
-        return str(candidate.resolve())
-
-    posix_path = pathlib.PurePosixPath(normalized.replace("\\", "/"))
-    parts = posix_path.parts
-    fallback_candidates: list[pathlib.Path] = []
-
-    if "robosuite" in parts and "models" in parts and "assets" in parts:
-        assets_index = parts.index("assets")
-        fallback_candidates.append(_ROBOSUITE_ASSETS_ROOT / pathlib.Path(*parts[assets_index + 1 :]))
-    if "chiliocosm" in parts and "assets" in parts:
-        assets_index = parts.index("assets")
-        fallback_candidates.append(THIRD_PARTY_LIBERO_ROOT / "assets" / pathlib.Path(*parts[assets_index + 1 :]))
-        fallback_candidates.append(_ROBOSUITE_ASSETS_ROOT / pathlib.Path(*parts[assets_index + 1 :]))
-    if len(parts) >= 3 and parts[0] == "libero" and parts[1] == "libero" and parts[2] == "assets":
-        fallback_candidates.append(THIRD_PARTY_LIBERO_ROOT / "assets" / pathlib.Path(*parts[3:]))
-    elif "libero" in parts and "assets" in parts:
-        assets_index = parts.index("assets")
-        fallback_candidates.append(THIRD_PARTY_LIBERO_ROOT / "assets" / pathlib.Path(*parts[assets_index + 1 :]))
-
-    for fallback in fallback_candidates:
-        if fallback.exists():
-            return str(fallback.resolve())
-
-    return normalized
-
-
-def _rewrite_model_xml_paths(model_xml: str) -> str:
-    def replace_file_attr(match: re.Match[str]) -> str:
-        return f'file="{_resolve_model_asset_path(match.group(1))}"'
-
-    return re.sub(r'file="([^"]+)"', replace_file_attr, model_xml)
-
-
-def _get_camera_extrinsic(env, camera_name: str) -> np.ndarray:
-    cam_id = env.sim.model.camera_name2id(camera_name)
-    cam_pos = np.asarray(env.sim.data.cam_xpos[cam_id], dtype=np.float32)
-    cam_rot = np.asarray(env.sim.data.cam_xmat[cam_id], dtype=np.float32).reshape(3, 3)
-
-    extrinsic = np.eye(4, dtype=np.float32)
-    extrinsic[:3, :3] = cam_rot
-    extrinsic[:3, 3] = cam_pos
-    return extrinsic
-
-
-def _load_episode_model(env, model_xml: str) -> None:
-    reset_success = False
-    while not reset_success:
-        try:
-            env.reset()
-            reset_success = True
-        except Exception:
-            continue
-
-    env.reset_from_xml_string(_rewrite_model_xml_paths(model_xml))
-    env.sim.reset()
-    env._post_process()
-    env._update_observables(force=True)
-
-
-def _set_env_state(env, state: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    env.sim.set_state_from_flattened(state)
-    env.sim.forward()
-
-    return (
-        _get_camera_extrinsic(env, "agentview"),
-        _get_camera_extrinsic(env, "robot0_eye_in_hand"),
-    )
-
-
 def _preprocess_image(image: np.ndarray, image_size: int) -> np.ndarray:
     rotated = np.ascontiguousarray(np.asarray(image)[::-1, ::-1])
     resized = image_tools.resize_with_pad(rotated, image_size, image_size)
     return image_tools.convert_to_uint8(resized)
+
+
+def _scale_intrinsic(K: np.ndarray, src_h: int, src_w: int, dst_h: int, dst_w: int) -> np.ndarray:
+    """Scale intrinsic K from (src_h, src_w) to (dst_h, dst_w) pixels.
+
+    Works for the openpi LIBERO pipeline, where both source and target are
+    square and resize_with_pad performs a uniform scale (no padding). The
+    scaling multiplies fx, cx by dst_w/src_w and fy, cy by dst_h/src_h.
+    """
+    K_out = np.asarray(K, dtype=np.float32).copy()
+    sx = float(dst_w) / float(src_w)
+    sy = float(dst_h) / float(src_h)
+    K_out[0, 0] *= sx
+    K_out[0, 2] *= sx
+    K_out[1, 1] *= sy
+    K_out[1, 2] *= sy
+    return K_out
+
+
+def _read_episode_camera_params(
+    obs_group: h5py.Group,
+    frame_count: int,
+    image_size: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Read per-frame extrinsics and per-episode intrinsics from one HDF5 obs group.
+
+    Returns (agent_ext, wrist_ext, agent_K, wrist_K), where extrinsics are (T, 4, 4)
+    and intrinsics are (3, 3) scaled to `image_size` pixels.
+    """
+    if "agent_extrinsic" not in obs_group or "wrist_extrinsic" not in obs_group:
+        raise ValueError(
+            "HDF5 obs group missing agent_extrinsic/wrist_extrinsic datasets — "
+            "regenerate with an updated LIBERO-Camera/scripts/create_dataset.py"
+        )
+    if "agent_intrinsic" not in obs_group.attrs or "wrist_intrinsic" not in obs_group.attrs:
+        raise ValueError(
+            "HDF5 obs attrs missing agent_intrinsic/wrist_intrinsic — "
+            "regenerate with an updated LIBERO-Camera/scripts/create_dataset.py"
+        )
+
+    agent_ext = np.asarray(obs_group["agent_extrinsic"][()], dtype=np.float32)
+    wrist_ext = np.asarray(obs_group["wrist_extrinsic"][()], dtype=np.float32)
+    if agent_ext.shape != (frame_count, 4, 4) or wrist_ext.shape != (frame_count, 4, 4):
+        raise ValueError(
+            f"Extrinsic shape mismatch: agent={agent_ext.shape}, wrist={wrist_ext.shape}, "
+            f"expected ({frame_count}, 4, 4)"
+        )
+
+    agent_hw = np.asarray(obs_group.attrs.get("agent_image_size", (image_size, image_size)))
+    wrist_hw = np.asarray(obs_group.attrs.get("wrist_image_size", (image_size, image_size)))
+    agent_K = _scale_intrinsic(
+        np.asarray(obs_group.attrs["agent_intrinsic"]),
+        int(agent_hw[0]), int(agent_hw[1]), image_size, image_size,
+    )
+    wrist_K = _scale_intrinsic(
+        np.asarray(obs_group.attrs["wrist_intrinsic"]),
+        int(wrist_hw[0]), int(wrist_hw[1]), image_size, image_size,
+    )
+    return agent_ext, wrist_ext, agent_K, wrist_K
 
 
 def _iter_hdf5_files(dataset_root: pathlib.Path) -> list[pathlib.Path]:
@@ -373,6 +240,16 @@ def _create_dataset(
                 "shape": (4, 4),
                 "names": ["row", "col"],
             },
+            "agent_intrinsic": {
+                "dtype": "float32",
+                "shape": (3, 3),
+                "names": ["row", "col"],
+            },
+            "wrist_intrinsic": {
+                "dtype": "float32",
+                "shape": (3, 3),
+                "names": ["row", "col"],
+            },
         },
         image_writer_threads=image_writer_threads,
         image_writer_processes=image_writer_processes,
@@ -466,65 +343,63 @@ def main(
             data_group = h5_file["data"]
             problem_info = _load_json_attr(data_group.attrs, "problem_info")
             task = _normalize_task(problem_info)
-            env = _build_env_from_data_group(data_group)
 
-            try:
-                episode_names = sorted(data_group.keys())
-                if max_episodes_per_file > 0:
-                    episode_names = episode_names[:max_episodes_per_file]
+            episode_names = sorted(data_group.keys())
+            if max_episodes_per_file > 0:
+                episode_names = episode_names[:max_episodes_per_file]
 
-                for episode_name in episode_names:
-                    episode_group = data_group[episode_name]
-                    obs_group = episode_group["obs"]
+            for episode_name in episode_names:
+                episode_group = data_group[episode_name]
+                obs_group = episode_group["obs"]
 
-                    agent_images = obs_group["agentview_rgb"][()]
-                    wrist_images = obs_group["eye_in_hand_rgb"][()]
-                    ee_states = np.asarray(obs_group["ee_states"][()], dtype=np.float32)
-                    gripper_states = np.asarray(obs_group["gripper_states"][()], dtype=np.float32)
-                    actions = np.asarray(episode_group["actions"][()], dtype=np.float32)
-                    states = np.asarray(episode_group["states"][()])
-                    model_xml = _as_text(episode_group.attrs["model_file"])
+                agent_images = obs_group["agentview_rgb"][()]
+                wrist_images = obs_group["eye_in_hand_rgb"][()]
+                ee_states = np.asarray(obs_group["ee_states"][()], dtype=np.float32)
+                gripper_states = np.asarray(obs_group["gripper_states"][()], dtype=np.float32)
+                actions = np.asarray(episode_group["actions"][()], dtype=np.float32)
 
-                    frame_count = len(actions)
-                    if frame_count == 0:
-                        continue
-                    if any(len(array) != frame_count for array in (agent_images, wrist_images, ee_states, gripper_states, states)):
-                        raise ValueError(f"Mismatched frame counts in {hdf5_path} / {episode_name}")
+                frame_count = len(actions)
+                if frame_count == 0:
+                    continue
+                if any(len(array) != frame_count for array in (agent_images, wrist_images, ee_states, gripper_states)):
+                    raise ValueError(f"Mismatched frame counts in {hdf5_path} / {episode_name}")
 
-                    state = np.concatenate([ee_states, gripper_states], axis=-1).astype(np.float32)
-                    if state.shape[-1] != 8:
-                        raise ValueError(
-                            f"Expected state dim 8, got {state.shape[-1]} in {hdf5_path} / {episode_name}"
-                        )
-                    if actions.shape[-1] != 7:
-                        raise ValueError(
-                            f"Expected action dim 7, got {actions.shape[-1]} in {hdf5_path} / {episode_name}"
-                        )
-
-                    _load_episode_model(env, model_xml=model_xml)
-                    for frame_index in range(frame_count):
-                        agent_extrinsic, wrist_extrinsic = _set_env_state(env, states[frame_index])
-                        dataset.add_frame(
-                            {
-                                "image": _preprocess_image(agent_images[frame_index], image_size),
-                                "wrist_image": _preprocess_image(wrist_images[frame_index], image_size),
-                                "state": state[frame_index],
-                                "actions": actions[frame_index],
-                                "agent_extrinsic": agent_extrinsic,
-                                "wrist_extrinsic": wrist_extrinsic,
-                                "task": task,
-                            }
-                        )
-
-                    dataset.save_episode()
-                    total_episodes += 1
-                    total_frames += frame_count
-                    print(
-                        f"[convert] file={hdf5_path.name} episode={episode_name} "
-                        f"frames={frame_count} task={task}"
+                state = np.concatenate([ee_states, gripper_states], axis=-1).astype(np.float32)
+                if state.shape[-1] != 8:
+                    raise ValueError(
+                        f"Expected state dim 8, got {state.shape[-1]} in {hdf5_path} / {episode_name}"
                     )
-            finally:
-                env.close()
+                if actions.shape[-1] != 7:
+                    raise ValueError(
+                        f"Expected action dim 7, got {actions.shape[-1]} in {hdf5_path} / {episode_name}"
+                    )
+
+                agent_ext, wrist_ext, agent_K, wrist_K = _read_episode_camera_params(
+                    obs_group, frame_count, image_size
+                )
+
+                for frame_index in range(frame_count):
+                    dataset.add_frame(
+                        {
+                            "image": _preprocess_image(agent_images[frame_index], image_size),
+                            "wrist_image": _preprocess_image(wrist_images[frame_index], image_size),
+                            "state": state[frame_index],
+                            "actions": actions[frame_index],
+                            "agent_extrinsic": agent_ext[frame_index],
+                            "wrist_extrinsic": wrist_ext[frame_index],
+                            "agent_intrinsic": agent_K,
+                            "wrist_intrinsic": wrist_K,
+                            "task": task,
+                        }
+                    )
+
+                dataset.save_episode()
+                total_episodes += 1
+                total_frames += frame_count
+                print(
+                    f"[convert] file={hdf5_path.name} episode={episode_name} "
+                    f"frames={frame_count} task={task}"
+                )
 
     print(
         f"[convert] completed repo_id={output_repo_id} mode={mode} "

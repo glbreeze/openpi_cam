@@ -207,10 +207,18 @@ def preprocess_observation(
         else:
             out_masks[key] = jnp.asarray(observation.image_masks[key])
 
+    # NOTE: the JAX path does not yet scale intrinsics when images are resized
+    # (see preprocessing_pytorch.py for the reference scaling). For LIBERO the
+    # data transforms resize upstream so image_resolution usually matches and
+    # no scale is needed; we propagate raw values here.
     return Observation(
         images=out_images,
         image_masks=out_masks,
         state=observation.state,
+        agent_extrinsic=observation.agent_extrinsic,
+        wrist_extrinsic=observation.wrist_extrinsic,
+        agent_intrinsic=observation.agent_intrinsic,
+        wrist_intrinsic=observation.wrist_intrinsic,
         tokenized_prompt=observation.tokenized_prompt,
         tokenized_prompt_mask=observation.tokenized_prompt_mask,
         token_ar_mask=observation.token_ar_mask,

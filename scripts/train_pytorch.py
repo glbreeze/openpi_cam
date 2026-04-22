@@ -641,7 +641,6 @@ def train_loop(config: _config.TrainConfig):
             logging.info(f"--- model loading ---- Missing keys (expected for new modules): {missing}")
         if unexpected:
             logging.warning(f"--- model loading ---- Unexpected keys in checkpoint: {unexpected}")
-    import pdb; pdb.set_trace()
     apply_trainable_prefixes(model)
 
     # Optimizer + learning rate schedule from config

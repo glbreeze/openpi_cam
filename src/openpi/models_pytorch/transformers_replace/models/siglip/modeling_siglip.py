@@ -274,6 +274,19 @@ class SiglipVisionEmbeddings(nn.Module):
         patch_embeds = self.patch_embedding(pixel_values.to(dtype=target_dtype))  # shape = [*, width, grid, grid]
         embeddings = patch_embeds.flatten(2).transpose(1, 2)
 
+        # ---- openpi camera-conditioning: pre-decoder ray-embedding injection ----
+        # `PaliGemmaWithExpertModel.embed_image` in models_pytorch/gemma_pytorch.py
+        # precomputes a per-view ray embedding (K^-1 * pix projected through a
+        # zero-init PatchEmbed) and attaches it here as a transient attribute
+        # before calling vision_tower. We add it into the patch-token stream
+        # BEFORE the transformer encoder runs, so SigLIP's decoder layers see
+        # intrinsic-aware patch tokens from layer 1 (pi3x pattern). The attribute
+        # is cleared by the caller after the forward pass. No-op at init because
+        # ray_embed is zero-initialized.
+        pending_ray_emb = getattr(self, "_pending_ray_emb", None)
+        if pending_ray_emb is not None:
+            embeddings = embeddings + pending_ray_emb.to(dtype=embeddings.dtype)
+
         if interpolate_pos_encoding:
             embeddings = embeddings + self.interpolate_pos_encoding(embeddings, height, width)
         else:

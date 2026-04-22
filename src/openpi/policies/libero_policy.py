@@ -26,6 +26,56 @@ def _parse_image(image) -> np.ndarray:
     return image
 
 
+def _adjust_K_for_openpi_image_flip(K) -> np.ndarray:
+    """Absorb openpi's `_preprocess_image` `[::-1, ::-1]` flip into K.
+
+    openpi flips the LIBERO image on both axes before feeding it to the model:
+      - `flipud` maps opengl-y-up onto standard y-down pixel convention; this
+        is already consistent with positive fy, so cy/fy stay unchanged.
+      - `fliplr` mirrors x; with a centered principal point (cx = W/2) the
+        correct absorption is `fx -> -fx`, which flips ray directions in x
+        and inverts the u-coordinate of the projection.
+
+    Must be paired with `_mujoco_to_opencv_extrinsic` on the matching camera
+    extrinsic so that `K @ viewmat @ X_w` projects into the flipped image
+    consistently.
+
+    Inputs may be float ndarray or torch tensor. Returns the same type.
+    """
+    K_out = np.asarray(K).copy()
+    K_out[..., 0, 0] = -K_out[..., 0, 0]
+    return K_out.astype(np.float32)
+
+
+def _mujoco_to_opencv_extrinsic(T) -> np.ndarray:
+    """Convert a (4, 4) camera-to-world extrinsic from MuJoCo to OpenCV camera-frame convention.
+
+    MuJoCo's ``cam_xmat`` stores the camera axes in world coords as (x-right,
+    y-up, z-back) — the OpenGL convention. Our intrinsic K (positive fx/fy,
+    cx=W/2, cy=H/2, plus the `fx -> -fx` fliplr adjustment) is a standard
+    OpenCV pinhole matrix that assumes an (x-right, y-down, z-forward) camera
+    frame. To pair them cleanly we redefine the camera frame by
+    right-multiplying the C2W matrix by diag(1, -1, -1, 1) — this negates the
+    camera's y and z axes without moving the camera in the world:
+
+        T_wc_opencv = T_wc_mujoco @ diag(1, -1, -1, 1)
+
+    Concretely this negates columns 1 and 2 of the rotation block while
+    leaving the translation column and the homogeneous row untouched. The
+    result is a valid SE(3) matrix whose viewmat maps world points into the
+    OpenCV camera frame used by `K` and by `ray_embed`.
+
+    Applying this on every extrinsic that is paired with an image that has
+    been fed through openpi's `_preprocess_image` (`[::-1, ::-1]`) is what
+    makes `K @ viewmat @ X_w` land on the correct pixel in the stored (flipped)
+    image.
+    """
+    T_out = np.asarray(T).copy()
+    T_out[..., :3, 1] = -T_out[..., :3, 1]
+    T_out[..., :3, 2] = -T_out[..., :3, 2]
+    return T_out.astype(np.float32)
+
+
 @dataclasses.dataclass(frozen=True)
 class LiberoInputs(transforms.DataTransformFn):
     """
@@ -71,16 +121,16 @@ class LiberoInputs(transforms.DataTransformFn):
 
         # ---- processing possible camera param ----
         if "observation/agent_extrinsic" in data:
-            inputs["agent_extrinsic"] = data["observation/agent_extrinsic"]
+            inputs["agent_extrinsic"] = _mujoco_to_opencv_extrinsic(data["observation/agent_extrinsic"])
 
         if "observation/wrist_extrinsic" in data:
-            inputs["wrist_extrinsic"] = data["observation/wrist_extrinsic"]
+            inputs["wrist_extrinsic"] = _mujoco_to_opencv_extrinsic(data["observation/wrist_extrinsic"])
 
         if "observation/agent_intrinsic" in data:
-            inputs["agent_intrinsic"] = data["observation/agent_intrinsic"]
+            inputs["agent_intrinsic"] = _adjust_K_for_openpi_image_flip(data["observation/agent_intrinsic"])
 
         if "observation/wrist_intrinsic" in data:
-            inputs["wrist_intrinsic"] = data["observation/wrist_intrinsic"]
+            inputs["wrist_intrinsic"] = _adjust_K_for_openpi_image_flip(data["observation/wrist_intrinsic"])
 
         # Pad actions to the model action dimension. Keep this for your own dataset.
         # Actions are only available during training.

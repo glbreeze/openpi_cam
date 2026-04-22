@@ -74,7 +74,7 @@ export SIMPLE_STAGE2_WARMUP_STEPS=1000
 export SIMPLE_STAGE2_PEAK_LR=2.5e-5
 export SIMPLE_STAGE2_DECAY_STEPS=55000
 export SIMPLE_STAGE2_END_LR=2.5e-6
-export SIMPLE_NEW_MODULE_PREFIXES=paligemma_with_expert.cam_pose_encoder,paligemma_with_expert.view_embedding,paligemma_with_expert.cross_view_fusion
+export SIMPLE_NEW_MODULE_PREFIXES=paligemma_with_expert.cam_pose_encoder,paligemma_with_expert.view_embedding,paligemma_with_expert.cross_view_fusion,paligemma_with_expert.ray_embed
 export SIMPLE_STAGE2_NEW_MODULE_LR_MULTIPLIER=4.0
 
 exec bash "${REPO_ROOT}/scripts/sbatch/train_pi0_libero_object_ft.sbatch"

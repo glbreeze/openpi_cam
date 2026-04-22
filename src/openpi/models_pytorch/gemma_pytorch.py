@@ -121,7 +121,16 @@ class PRoPEAttention(nn.Module):
         k = apply_kv(k)
         v = apply_kv(v)
 
-        out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        # Match the convention used by `openpi.models_pytorch.layers.attn.Attention`:
+        # caller passes a boolean per-key "blocked" mask of shape (B, S) where
+        # True means the key should NOT be attended to. sdpa expects a boolean
+        # "allowed" mask broadcastable to attention weights (B, H, L, S), so we
+        # invert and broadcast here.
+        allowed_mask = None
+        if attn_mask is not None:
+            allowed_mask = (~attn_mask)[:, None, None, :]
+
+        out = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=allowed_mask)
         out = apply_o(out)
         out = out.transpose(1, 2).reshape(B, N, C)
         return self.proj(out)
@@ -178,7 +187,12 @@ class PoseInjectBlock(nn.Module):
         connect: bool = False,
         attn_mask: Tensor | None = None,
     ) -> Tensor:
-        # poses are world->camera; invert to get camera->world extrinsics
+        # `poses` here are OpenCV-convention camera-to-world (C2W) matrices —
+        # `libero_policy._mujoco_to_opencv_extrinsic` upstream converts the raw
+        # MuJoCo C2W (y-up / z-back) into OpenCV (y-down / z-forward). PRoPE's
+        # `prope.prepare_apply_fns` expects `viewmats` in world-to-camera (W2C)
+        # form (see its docstring: "viewmats: camera<-world"), so we invert
+        # here. The local variable name `extrinsics` is legacy; it holds W2C.
         extrinsics = se3_inverse(poses)
 
         def attn_residual(x: Tensor) -> Tensor:
@@ -212,6 +226,24 @@ class CrossViewFusion(nn.Module):
         self.aa_order = aa_order
         self.rope = RotaryPositionEmbedding2D(frequency=rope_freq) if rope_freq > 0 else None
         self.prope_after_global = set(prope_layer_idx)
+
+        # Validate that every requested PRoPE insertion point refers to an
+        # existing global block in aa_order. Without this guard, entries >=
+        # num_global_blocks silently create `pose_inject_blocks` that can never
+        # be reached by `forward`, which (a) wastes parameters, (b) breaks DDP
+        # without find_unused_parameters=True, and (c) silently hides a config
+        # typo. Example: prope_layer_idx=(0, 1) with aa_order="fg" is invalid
+        # because global_idx only ever reaches 0.
+        if self.prope_after_global:
+            num_global_blocks = sum(1 for t in aa_order if t == "g")
+            invalid = sorted(i for i in self.prope_after_global if not 0 <= i < num_global_blocks)
+            if invalid:
+                raise ValueError(
+                    f"cross_view.prope_layer_idx={tuple(prope_layer_idx)} has entries outside "
+                    f"the valid range [0, {num_global_blocks}) for aa_order={aa_order!r}: "
+                    f"{invalid}. Either reduce prope_layer_idx or extend aa_order to include "
+                    "more 'g' blocks."
+                )
 
         self.frame_blocks = nn.ModuleList(
             [
@@ -293,11 +325,29 @@ class CrossViewFusion(nn.Module):
                 # Inject PRoPE after this global block if configured
                 if global_idx in self.prope_after_global and poses is not None:
                     tokens = tokens.reshape(bsz, num_views, num_tokens, dim)
+                    # Same convention as _process_global_attention: flatten the
+                    # per-view validity mask into (B, V*T) and invert so that
+                    # True == blocked for PRoPEAttention.
+                    prope_mask = (
+                        ~mask.reshape(bsz, num_views * num_tokens) if mask is not None else None
+                    )
                     pose_feat = self.pose_inject_blocks[pose_inject_idx](
                         tokens.reshape(bsz, num_views * num_tokens, dim),
                         poses, image_h, image_w, patch_h, patch_w, Ks=Ks,
+                        attn_mask=prope_mask,
                     )
-                    tokens = tokens + pose_feat.reshape(bsz, num_views, num_tokens, dim)
+                    pose_feat = pose_feat.reshape(bsz, num_views, num_tokens, dim)
+                    # Per-view validity: `stack_per_cam` upstream filled missing
+                    # extrinsics with identity, which produces meaningless PRoPE
+                    # transforms on invalid-view queries. `prope_mask` already
+                    # blocks these views as keys, but their queries still
+                    # accumulate an attention residual. Zero the residual for
+                    # views that are fully invalid so PRoPE pose_inject_blocks
+                    # don't receive gradient from fabricated-pose views.
+                    if mask is not None:
+                        view_valid = mask.any(dim=-1)  # (B, V), True if any token in view is valid
+                        pose_feat = pose_feat * view_valid[:, :, None, None].to(pose_feat.dtype)
+                    tokens = tokens + pose_feat
                     pose_inject_idx += 1
                 global_idx += 1
             else:
@@ -441,6 +491,7 @@ class PaliGemmaWithExpertModel(nn.Module):
                 num_embeddings=self.num_views,
                 embedding_dim=vlm_config_hf.vision_config.hidden_size,  # must match token dim D
             )
+            nn.init.zeros_(self.view_embedding.weight)
 
         if self.cross_view_config.type != "none":
             self.position_getter = PositionGetter() if self.cross_view_config.rope_freq > 0 else None
@@ -514,7 +565,53 @@ class PaliGemmaWithExpertModel(nn.Module):
         projector = self.paligemma.model.multi_modal_projector
 
         images = images.reshape(B * V, C, H, W)
-        tokens = vision_tower(images).last_hidden_state  # [B*V, P, D]
+
+        # -------- pre-decoder ray-embedding injection (pi3x pattern) --------
+        # Compute the per-view ray embedding BEFORE SigLIP so that its
+        # transformer encoder sees intrinsic-aware patch tokens from layer 1.
+        # We pass it to SigLIP by setting a transient attribute on
+        # `vision_tower.vision_model.embeddings`, which the patched
+        # `SiglipVisionEmbeddings.forward` (transformers_replace) reads and adds
+        # between `patch_embedding` and the position embedding. The attribute is
+        # always cleared in the `finally` block so it never leaks across calls.
+        pending_ray_emb = None
+        if self.ray_enc_type and cam_intr is not None:
+            ray_dtype = self.ray_embed.proj.weight.dtype
+            # (B, V, 3, 3) intrinsic stack with identity fallback for missing Ks.
+            K_stack = []
+            for cam_key in cam_keys:
+                K_per = cam_intr.get(cam_key)
+                if K_per is None:
+                    K_per = torch.eye(3, device=device, dtype=ray_dtype)[None].expand(B, -1, -1)
+                K_stack.append(K_per)
+            cam_intr_stacked = torch.stack(K_stack, dim=1)
+            pix = torch.from_numpy(get_pixel(H, W).T.reshape(H, W, 3)).to(device=device, dtype=ray_dtype)
+            pix = pix[None].expand(B, -1, -1, -1)  # (B, H, W, 3)
+            K_inv = torch.linalg.inv(cam_intr_stacked.float()).to(ray_dtype)  # fp32 invert for stability
+            rays = torch.einsum("bvij, bhwj -> bvhwi", K_inv, pix)[..., :2]  # (B, V, H, W, 2)
+            ray_emb_bv = self.ray_embed(
+                rays.reshape(B * V, H, W, 2).permute(0, 3, 1, 2)
+            )  # (B*V, N, D_vision)
+            # Per-view validity: zero out contributions from views without a real
+            # K so the zero-init ray_embed isn't driven by the identity fallback
+            # (and so no gradient leaks back through `self.ray_embed` from
+            # missing-intrinsic views).
+            intr_valid = torch.tensor(
+                [cam_intr.get(cam_key) is not None for cam_key in cam_keys],
+                dtype=torch.bool, device=device,
+            )  # (V,)
+            N_ray, D_ray = ray_emb_bv.shape[1], ray_emb_bv.shape[2]
+            ray_emb_bv = ray_emb_bv.reshape(B, V, N_ray, D_ray)
+            ray_emb_bv = ray_emb_bv * intr_valid[None, :, None, None].to(ray_emb_bv.dtype)
+            pending_ray_emb = ray_emb_bv.reshape(B * V, N_ray, D_ray)
+
+        emb_module = vision_tower.vision_model.embeddings
+        emb_module._pending_ray_emb = pending_ray_emb
+        try:
+            tokens = vision_tower(images).last_hidden_state  # [B*V, P, D]
+        finally:
+            emb_module._pending_ray_emb = None
+
         P, D = tokens.shape[1], tokens.shape[2]
         tokens = tokens.reshape(B, V, P, D)
         masks = img_masks[:, :, None].expand(B, V, P).clone()
@@ -545,16 +642,11 @@ class PaliGemmaWithExpertModel(nn.Module):
             return torch.stack(out, dim=1)
 
         # -------- ray direction embedding (from intrinsics) --------
-        if self.ray_enc_type and cam_intr is not None:
-            # (B, V, 3, 3) — compute pixel grid, back-project, keep (x, y)
-            cam_intr_stacked = stack_per_cam(cam_intr, 3)
-            pix = torch.from_numpy(get_pixel(H, W).T.reshape(H, W, 3)).to(device=device, dtype=tokens.dtype)
-            pix = pix[None].expand(B, -1, -1, -1)  # (B, H, W, 3)
-            K_inv = torch.linalg.inv(cam_intr_stacked.float()).to(tokens.dtype)  # invert in fp32 for stability
-            rays = torch.einsum("bvij, bhwj -> bvhwi", K_inv, pix)[..., :2]  # (B, V, H, W, 2)
-            ray_emb = self.ray_embed(rays.reshape(B * V, H, W, 2).permute(0, 3, 1, 2))  # (B*V, P, D)
-            ray_emb = ray_emb.reshape(B, V, P, D)
-            tokens = tokens + ray_emb
+        # Relocated: the ray embedding is now injected BEFORE the SigLIP
+        # transformer encoder (pi3x pattern) via the `_pending_ray_emb`
+        # attribute hook set above. See the block near the top of this method
+        # and the patched `SiglipVisionEmbeddings.forward` in
+        # `models_pytorch/transformers_replace/models/siglip/modeling_siglip.py`.
 
         # --------- camera token injection ---------
         if self.pose_enc_type in ["relative_pose", "absolute_pose"]:
