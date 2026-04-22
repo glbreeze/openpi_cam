@@ -715,6 +715,37 @@ _CONFIGS = [
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
     ),
+    # Camera-aware pi0 (pi3x pattern): ViewEmbedding + Ray Embedding (intrinsics)
+    # + PRoPE (extrinsics) on top of the standard CrossViewFusion with aa_order="fg".
+    # aa_order="fg" exposes a single global block, so prope_layer_idx=(0,) injects
+    # one PRoPEBlock after it. New modules (cross_view_fusion, ray_embed,
+    # view_embedding, pose_inject_blocks) train from scratch; backbone stays
+    # warm-started from pi0_base.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=True,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_cam",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_cam",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
     #
     # Fine-tuning Libero configs.
     #
