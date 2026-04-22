@@ -180,7 +180,6 @@ class PoseInjectBlock(nn.Module):
     ) -> Tensor:
         # poses are world->camera; invert to get camera->world extrinsics
         extrinsics = se3_inverse(poses)
-        import pdb; pdb.set_trace()
 
         def attn_residual(x: Tensor) -> Tensor:
             return self.ls1(self.attn(self.norm1(x), extrinsics, image_h, image_w, patch_h, patch_w, Ks, attn_mask))
@@ -280,7 +279,6 @@ class CrossViewFusion(nn.Module):
         patch_w: int = 0,
         Ks: Tensor | None = None,
     ):  
-        import pdb; pdb.set_trace()
         bsz, num_views, num_tokens, dim = tokens.shape
 
         frame_idx = 0
@@ -520,7 +518,6 @@ class PaliGemmaWithExpertModel(nn.Module):
         P, D = tokens.shape[1], tokens.shape[2]
         tokens = tokens.reshape(B, V, P, D)
         masks = img_masks[:, :, None].expand(B, V, P).clone()
-        import pdb; pdb.set_trace()
         # -------- helpers --------
         def encode_pose(pose):
             R = pose[..., :3, :3]
@@ -620,6 +617,7 @@ class PaliGemmaWithExpertModel(nn.Module):
                     image_w=W,
                     patch_h=H // patch_size,
                     patch_w=W // patch_size,
+                    Ks=stack_per_cam(cam_intr, 3),
                 )
 
             tokens = self.cross_view_fusion(tokens, mask=masks, pos=pos, **prope_kwargs)

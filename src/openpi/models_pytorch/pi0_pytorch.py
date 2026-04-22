@@ -202,8 +202,9 @@ class PI0Pytorch(nn.Module):
         """Helper method to preprocess observation."""
         observation = _preprocessing.preprocess_observation_pytorch(observation, train=train)
         return (
-            list(observation.images.values()),
-            list(observation.image_masks.values()),
+            observation,
+            torch.stack(list(observation.images.values()), dim=1),
+            torch.stack(list(observation.image_masks.values()), dim=1),
             observation.tokenized_prompt,
             observation.tokenized_prompt_mask,
             observation.state,
@@ -391,9 +392,9 @@ class PI0Pytorch(nn.Module):
         # observation: images{'base_0_rgb', 'left_wrist_0_rgb', 'right_wrist_0_rgb'}, image_masks
         # state [b, 32]  tokenized_prompt,tokenized_prompt_mask [32, 48],
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=True)
-
-        # images, img_masks: -> lists
+        observation, images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(
+            observation, train=True
+        )
 
         # ----------------- get noisy actions  -----------------
         if noise is None:
@@ -406,9 +407,6 @@ class PI0Pytorch(nn.Module):
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        import pdb; pdb.set_trace()
-        images = torch.stack(images, dim=1)  # [B, V, 3, 224, 224]
-        img_masks = torch.stack(img_masks, dim=1)  # [B, V]
         # ----------------- embed img + language  -----------------
         prefix_embs, prefix_pad_masks, prefix_att_masks, fused_tokens = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, obs=observation
@@ -478,8 +476,10 @@ class PI0Pytorch(nn.Module):
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
             noise = self.sample_noise(actions_shape, device)
 
-        images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(observation, train=False)
-
+        observation, images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(
+            observation, train=False
+        )
+        
         prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, observation
         )
