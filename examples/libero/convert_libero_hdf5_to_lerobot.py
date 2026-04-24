@@ -116,6 +116,17 @@ def _read_episode_camera_params(
 
     agent_hw = np.asarray(obs_group.attrs.get("agent_image_size", (image_size, image_size)))
     wrist_hw = np.asarray(obs_group.attrs.get("wrist_image_size", (image_size, image_size)))
+    if int(agent_hw[0]) != image_size or int(agent_hw[1]) != image_size:
+        print(
+            f"[convert][warn] agent native render {tuple(int(x) for x in agent_hw)} != "
+            f"target image_size ({image_size}, {image_size}); image will be scaled "
+            "(re-render HDF5 at the target resolution to avoid interpolation)."
+        )
+    if int(wrist_hw[0]) != image_size or int(wrist_hw[1]) != image_size:
+        print(
+            f"[convert][warn] wrist native render {tuple(int(x) for x in wrist_hw)} != "
+            f"target image_size ({image_size}, {image_size}); image will be scaled."
+        )
     agent_K = _scale_intrinsic(
         np.asarray(obs_group.attrs["agent_intrinsic"]),
         int(agent_hw[0]), int(agent_hw[1]), image_size, image_size,
@@ -224,6 +235,11 @@ def _create_dataset(
                 "dtype": "float32",
                 "shape": (8,),
                 "names": ["state"],
+            },
+            "joint_state": {
+                "dtype": "float32",
+                "shape": (7,),
+                "names": ["joint_state"],
             },
             "actions": {
                 "dtype": "float32",
@@ -357,12 +373,27 @@ def main(
                 ee_states = np.asarray(obs_group["ee_states"][()], dtype=np.float32)
                 gripper_states = np.asarray(obs_group["gripper_states"][()], dtype=np.float32)
                 actions = np.asarray(episode_group["actions"][()], dtype=np.float32)
+                joint_states_raw = obs_group["joint_states"][()] if "joint_states" in obs_group else None
 
                 frame_count = len(actions)
                 if frame_count == 0:
                     continue
                 if any(len(array) != frame_count for array in (agent_images, wrist_images, ee_states, gripper_states)):
                     raise ValueError(f"Mismatched frame counts in {hdf5_path} / {episode_name}")
+                if joint_states_raw is not None and len(joint_states_raw) != frame_count:
+                    raise ValueError(
+                        f"joint_states length {len(joint_states_raw)} != frame_count {frame_count} "
+                        f"in {hdf5_path} / {episode_name}"
+                    )
+                joint_states = (
+                    np.asarray(joint_states_raw, dtype=np.float32)
+                    if joint_states_raw is not None
+                    else np.zeros((frame_count, 7), dtype=np.float32)
+                )
+                if joint_states.shape[-1] != 7:
+                    raise ValueError(
+                        f"Expected joint_state dim 7, got {joint_states.shape[-1]} in {hdf5_path} / {episode_name}"
+                    )
 
                 state = np.concatenate([ee_states, gripper_states], axis=-1).astype(np.float32)
                 if state.shape[-1] != 8:
@@ -384,6 +415,7 @@ def main(
                             "image": _preprocess_image(agent_images[frame_index], image_size),
                             "wrist_image": _preprocess_image(wrist_images[frame_index], image_size),
                             "state": state[frame_index],
+                            "joint_state": joint_states[frame_index],
                             "actions": actions[frame_index],
                             "agent_extrinsic": agent_ext[frame_index],
                             "wrist_extrinsic": wrist_ext[frame_index],
