@@ -187,6 +187,12 @@ def eval_libero(args: Args) -> None:
                             ),
                             "observation/agent_extrinsic": _get_camera_extrinsic(env, "agentview"),
                             "observation/wrist_extrinsic": _get_camera_extrinsic(env, "robot0_eye_in_hand"),
+                            "observation/agent_intrinsic": _get_camera_intrinsic(
+                                env, "agentview", args.resize_size, args.resize_size
+                            ),
+                            "observation/wrist_intrinsic": _get_camera_intrinsic(
+                                env, "robot0_eye_in_hand", args.resize_size, args.resize_size
+                            ),
                             "prompt": str(task_description),
                         }
 
@@ -288,6 +294,26 @@ def _get_camera_extrinsic(env, camera_name):
     extrinsic[:3, :3] = cam_rot
     extrinsic[:3, 3] = cam_pos
     return extrinsic
+
+
+def _get_camera_intrinsic(env, camera_name, image_h, image_w):
+    """Pinhole K from MuJoCo `cam_fovy`, sized for an `image_h` x `image_w` render.
+
+    Mirrors LIBERO-Camera/scripts/create_dataset.py::_get_camera_intrinsic. Must
+    be evaluated at the resolution of the image actually sent to the policy —
+    `preprocess_observation_pytorch` only rescales K when it also resizes the
+    image, so a pre-resized 224-px image needs K computed at 224 px.
+    """
+    cam_id = env.sim.model.camera_name2id(camera_name)
+    fovy_rad = np.deg2rad(float(env.sim.model.cam_fovy[cam_id]))
+    fy = (image_h / 2.0) / np.tan(fovy_rad / 2.0)
+    fx = fy
+    cx = image_w / 2.0
+    cy = image_h / 2.0
+    return np.array(
+        [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
 
 
 def _quat2axisangle(quat):
