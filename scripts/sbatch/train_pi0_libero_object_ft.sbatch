@@ -63,7 +63,11 @@ KEEP_PERIOD=${KEEP_PERIOD:-5000}
 CHECKPOINT_BASE_DIR=${CHECKPOINT_BASE_DIR:-${REPO_ROOT}/checkpoints}
 CACHE_ROOT=${CACHE_ROOT:-${GEO_ROOT}/.cache/huggingface}
 OPENPI_CACHE_ROOT=${OPENPI_CACHE_ROOT:-${GEO_ROOT}/.cache/openpi}
-MODEL_POSE_ENC_TYPE=${MODEL_POSE_ENC_TYPE:-absolute_pose}
+MODEL_POSE_ENC_TYPE=${MODEL_POSE_ENC_TYPE:-}
+MODEL_RAY_ENC_TYPE=${MODEL_RAY_ENC_TYPE:-}
+MODEL_VIEW_ENC_TYPE=${MODEL_VIEW_ENC_TYPE:-}
+MODEL_PROPE_LAYER_IDX=${MODEL_PROPE_LAYER_IDX:-}
+MODEL_CROSS_VIEW_AA_ORDER=${MODEL_CROSS_VIEW_AA_ORDER:-}
 CROSS_VIEW_TYPE=${CROSS_VIEW_TYPE:-}
 TRAIN_RECIPE=${TRAIN_RECIPE:-auto}
 SIMPLE_STAGE1_STEPS=${SIMPLE_STAGE1_STEPS:-5000}
@@ -91,6 +95,9 @@ if [[ "${USE_CAM}" == "true" ]]; then
         CROSS_VIEW_TYPE="simple"
         ;;
       pi0_libero_cam_pytorch_full_finetune_standard)
+        CROSS_VIEW_TYPE="standard"
+        ;;
+      pi0_libero_cam_pytorch_prope_ray_view)
         CROSS_VIEW_TYPE="standard"
         ;;
     esac
@@ -228,13 +235,31 @@ build_train_args() {
   )
 
   if [[ "${USE_CAM}" == "true" ]]; then
-    out_args+=(
-      --model.pose_enc_type "${MODEL_POSE_ENC_TYPE}"
-    )
+    if [[ -n "${MODEL_POSE_ENC_TYPE}" ]]; then
+      out_args+=(
+        --model.pose_enc_type "${MODEL_POSE_ENC_TYPE}"
+      )
+    fi
+    if [[ "${MODEL_RAY_ENC_TYPE}" == "true" ]]; then
+      out_args+=(--model.ray_enc_type)
+    fi
+    if [[ "${MODEL_VIEW_ENC_TYPE}" == "true" ]]; then
+      out_args+=(--model.view_enc_type)
+    fi
     if [[ -n "${CROSS_VIEW_TYPE}" ]]; then
       out_args+=(
         --model.cross_view.type "${CROSS_VIEW_TYPE}"
       )
+    fi
+    if [[ -n "${MODEL_CROSS_VIEW_AA_ORDER}" ]]; then
+      out_args+=(
+        --model.cross_view.aa_order "${MODEL_CROSS_VIEW_AA_ORDER}"
+      )
+    fi
+    if [[ -n "${MODEL_PROPE_LAYER_IDX}" ]]; then
+      IFS=',' read -r -a prope_layer_idx_values <<< "${MODEL_PROPE_LAYER_IDX}"
+      out_args+=(--model.cross_view.prope_layer_idx)
+      out_args+=("${prope_layer_idx_values[@]}")
     fi
   fi
 
@@ -355,8 +380,12 @@ echo "resume: ${RESUME}"
 echo "config: ${CONFIG_NAME}"
 echo "exp: ${EXP_NAME}"
 echo "train_recipe: ${TRAIN_RECIPE}"
-echo "pose_enc_type: ${MODEL_POSE_ENC_TYPE}"
+echo "pose_enc_type: ${MODEL_POSE_ENC_TYPE:-config_default}"
+echo "ray_enc_type: ${MODEL_RAY_ENC_TYPE:-config_default}"
+echo "view_enc_type: ${MODEL_VIEW_ENC_TYPE:-config_default}"
 echo "cross_view_type: ${CROSS_VIEW_TYPE:-config_default}"
+echo "cross_view_aa_order: ${MODEL_CROSS_VIEW_AA_ORDER:-config_default}"
+echo "prope_layer_idx: ${MODEL_PROPE_LAYER_IDX:-config_default}"
 echo "dataset: ${DATASET_DIR}"
 echo "base model: ${BASE_MODEL_DIR}"
 echo "norm stats: ${NORM_STATS_DIR}"

@@ -734,10 +734,10 @@ _CONFIGS = [
             ),
         ),
         data=LeRobotLiberoDataConfig(
-            repo_id=f"{HF_NAME}/libero_cam",
+            repo_id=f"{HF_NAME}/libero_object_cam",
             assets=AssetsConfig(
                 assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
-                asset_id=f"{HF_NAME}/libero_cam",
+                asset_id=f"{HF_NAME}/libero_object_cam",
             ),
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
