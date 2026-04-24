@@ -726,12 +726,13 @@ _CONFIGS = [
         model=pi0_config.Pi0Config(
             pose_enc_type="prope",
             ray_enc_type=True,
-            view_enc_type=True,
+            view_enc_type=False,
             cross_view=cross_view_config.CrossViewFusionConfig(
                 type="standard",
                 aa_order="fg",
                 prope_layer_idx=(0,),
             ),
+            disable_geometric_augs=True,
         ),
         data=LeRobotLiberoDataConfig(
             repo_id=f"{HF_NAME}/libero_object_cam",

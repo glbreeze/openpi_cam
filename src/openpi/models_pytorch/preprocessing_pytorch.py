@@ -185,6 +185,7 @@ def preprocess_observation_pytorch(
     train: bool = False,
     image_keys: Sequence[str] = IMAGE_KEYS,
     image_resolution: tuple[int, int] = IMAGE_RESOLUTION,
+    disable_geometric_augs: bool = False,
 ):
     """Torch.compile-compatible observation preprocessing with camera-geometry updates."""
     if not set(image_keys).issubset(observation.images):
@@ -230,7 +231,7 @@ def preprocess_observation_pytorch(
         if train:
             image = image / 2.0 + 0.5
 
-            if "wrist" not in key:
+            if "wrist" not in key and not disable_geometric_augs:
                 height, width = image.shape[1:3]
 
                 crop_height = int(height * 0.95)

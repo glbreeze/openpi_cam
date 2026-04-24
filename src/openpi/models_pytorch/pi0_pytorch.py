@@ -200,7 +200,11 @@ class PI0Pytorch(nn.Module):
 
     def _preprocess_observation(self, observation, *, train=True):
         """Helper method to preprocess observation."""
-        observation = _preprocessing.preprocess_observation_pytorch(observation, train=train)
+        observation = _preprocessing.preprocess_observation_pytorch(
+            observation,
+            train=train,
+            disable_geometric_augs=getattr(self.config, "disable_geometric_augs", False),
+        )
         return (
             observation,
             torch.stack(list(observation.images.values()), dim=1),

@@ -29,6 +29,11 @@ class Pi0Config(_model.BaseModelConfig):
     pose_enc_type: str = "null"  # "null" | "relative_pose" | "absolute_pose" | "prope"
     ray_enc_type: bool = False
     view_enc_type: bool = False
+    # If True, skip random crop + random rotation in the PyTorch train-time image
+    # preprocessing (ColorJitter still runs). Intended for camera-aware runs where
+    # the zero-init ray_embed / PRoPE modules should learn clean geometric
+    # correspondences without per-step K jitter. JAX path currently ignores this.
+    disable_geometric_augs: bool = False
 
     # Set the model specific defaults.
     action_dim: int = 32
