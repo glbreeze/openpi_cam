@@ -241,9 +241,7 @@ class PI0Pytorch(nn.Module):
             aux_out["point"] = self.aux_point_head(fused_tokens.float())
         return aux_out
 
-    def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks, obs
-    ):
+    def embed_prefix(self, images, img_masks, lang_tokens, lang_masks, obs):
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for PaliGemma transformer processing.
 
@@ -274,7 +272,11 @@ class PI0Pytorch(nn.Module):
         # -------------- Process images (vision_tower + multi_modal_projector) --------------
         def image_embed_func(images, img_masks, cam_pos, cam_intr):
             return self.paligemma_with_expert.embed_image(
-                images, img_masks, cam_pos=cam_pos, cam_intr=cam_intr, cam_keys=cam_keys,
+                images,
+                img_masks,
+                cam_pos=cam_pos,
+                cam_intr=cam_intr,
+                cam_keys=cam_keys,
             )
 
         img_emb, img_masks, fused_tokens = self._apply_checkpoint(
@@ -463,12 +465,38 @@ class PI0Pytorch(nn.Module):
 
         aux_pred = self.auxiliary_head(fused_tokens)
         if "point" in aux_pred:
-            xy_pred, z_pred = aux_pred["point"]
+            xy_pred, z_pred = aux_pred["point"]  # (B, V, P, 2), (B, V, P, 1)
             w = self.config.aux_point_head.loss_weight
-            # TODO: replace with `w * mse(pred, pi3x_teacher_targets)`. Until teacher
-            # targets are wired, use a zero-contribution term that still exercises the
-            # weight path and keeps head params in the autograd graph for DDP.
-            loss = loss + w * 0.0 * (xy_pred.sum() + z_pred.sum())
+            xy_tgt = getattr(observation, "pi3x_target_xy", None)
+            logz_tgt = getattr(observation, "pi3x_target_logz", None)
+            conf_tgt = getattr(observation, "pi3x_target_conf", None)
+
+            if xy_tgt is None or logz_tgt is None or conf_tgt is None:
+                # No teacher targets in this batch — keep the head in the autograd graph
+                # for DDP without contributing to the loss.
+                loss = loss + w * 0.0 * (xy_pred.sum() + z_pred.sum())
+            else:
+                # Targets come from the loader as (B, V_t, ph, pw, C). Flatten patches and
+                # slice the prediction to the supervised view count (V_t = 2 for libero;
+                # the padded right_wrist view has no teacher target).
+                v_tgt = xy_tgt.shape[1]
+                xy_tgt_f = xy_tgt.flatten(2, 3).to(xy_pred.dtype)  # (B, V_t, P, 2)
+                logz_tgt_f = logz_tgt.flatten(2, 3).to(z_pred.dtype)  # (B, V_t, P, 1)
+                conf_tgt_f = conf_tgt.flatten(2, 3).to(xy_pred.dtype)  # (B, V_t, P, 1)
+                xy_pred_v = xy_pred[:, :v_tgt]
+                z_pred_v = z_pred[:, :v_tgt]
+
+                # Confidence gate matches Pi3X's demo masking (`sigmoid(conf) > 0.1`),
+                # weighted by the per-view image_mask so dropped views contribute zero.
+                mask = (torch.sigmoid(conf_tgt_f) > 0.1).to(xy_pred.dtype)  # (B, V_t, P, 1)
+                view_mask = img_masks[:, :v_tgt].to(xy_pred.dtype)  # (B, V_t)
+                mask = mask * view_mask[:, :, None, None]
+
+                denom = mask.sum().clamp_min(1.0)
+                xy_loss = ((xy_pred_v - xy_tgt_f) ** 2 * mask).sum() / denom / xy_pred_v.shape[-1]
+                z_loss = ((z_pred_v - logz_tgt_f) ** 2 * mask).sum() / denom
+
+                loss = loss + w * (xy_loss + z_loss)
 
         return loss
 
@@ -483,7 +511,7 @@ class PI0Pytorch(nn.Module):
         observation, images, img_masks, lang_tokens, lang_masks, state = self._preprocess_observation(
             observation, train=False
         )
-        
+
         prefix_embs, prefix_pad_masks, prefix_att_masks, _ = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, observation
         )

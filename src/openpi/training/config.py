@@ -18,6 +18,7 @@ import openpi.models.cross_view_config as cross_view_config
 import openpi.models.model as _model
 import openpi.models.pi0_config as pi0_config
 import openpi.models.pi0_fast as pi0_fast
+import openpi.models.point_head_config as point_head_config
 import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
@@ -305,6 +306,10 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
 
     extra_delta_transform: bool = False
     include_cam_extrinsics: bool = False
+    # When set, attach a Pi3xLiberoTargetLoader after the repack so the auxiliary
+    # point head can be supervised with cached patch-resolution Pi3X targets at
+    # `{root}/{cam}/episode_NNNNNN.npz`.
+    pi3x_targets_root: str | None = None
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -333,8 +338,16 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
                     "observation/wrist_intrinsic": "wrist_intrinsic",
                 }
             )
+        if self.pi3x_targets_root is not None:
+            # Carry LeRobot row indices through the repack so Pi3xLiberoTargetLoader
+            # can look up cached teacher targets per (episode, frame).
+            repack_structure["episode_index"] = "episode_index"
+            repack_structure["frame_index"] = "frame_index"
 
-        repack_transform = _transforms.Group(inputs=[_transforms.RepackTransform(repack_structure)])
+        repack_inputs = [_transforms.RepackTransform(repack_structure)]
+        if self.pi3x_targets_root is not None:
+            repack_inputs.append(libero_policy.Pi3xLiberoTargetLoader(root=self.pi3x_targets_root))
+        repack_transform = _transforms.Group(inputs=repack_inputs)
 
         # The data transforms are applied to the data coming from the dataset *and* during inference.
         # Below, we define the transforms for data going into the model (``inputs``) and the transforms
@@ -743,6 +756,37 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
             include_cam_extrinsics=True,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    # Same backbone as pi0_libero_cam_pytorch_prope_ray_view, plus the auxiliary
+    # PointHead supervised by Pi3X patch-resolution targets cached upstream by
+    # `scripts/cache_pi3x_targets.py`.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            aux_point_head=point_head_config.AuxPointHeadConfig(enabled=True, loss_weight=0.05),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_v3",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_v3",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=str(pathlib.Path("~/.cache/openpi/pi3x_targets/libero_object_cam_v3").expanduser()),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,

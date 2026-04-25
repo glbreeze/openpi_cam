@@ -77,7 +77,9 @@ def _make_pixel_transform(
     )
 
 
-def _apply_pixel_transform_to_intrinsic(intrinsic: torch.Tensor | None, pixel_transform: torch.Tensor) -> torch.Tensor | None:
+def _apply_pixel_transform_to_intrinsic(
+    intrinsic: torch.Tensor | None, pixel_transform: torch.Tensor
+) -> torch.Tensor | None:
     if intrinsic is None:
         return None
     transform = pixel_transform.to(device=intrinsic.device, dtype=intrinsic.dtype)
@@ -338,6 +340,9 @@ def preprocess_observation_pytorch(
         wrist_extrinsic=updated_extrinsics["wrist_extrinsic"],
         agent_intrinsic=updated_intrinsics["agent_intrinsic"],
         wrist_intrinsic=updated_intrinsics["wrist_intrinsic"],
+        pi3x_target_xy=_clone_optional_tensor(getattr(observation, "pi3x_target_xy", None)),
+        pi3x_target_logz=_clone_optional_tensor(getattr(observation, "pi3x_target_logz", None)),
+        pi3x_target_conf=_clone_optional_tensor(getattr(observation, "pi3x_target_conf", None)),
         tokenized_prompt=observation.tokenized_prompt,
         tokenized_prompt_mask=observation.tokenized_prompt_mask,
         token_ar_mask=observation.token_ar_mask,

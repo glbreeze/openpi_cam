@@ -633,6 +633,7 @@ def train_loop(config: _config.TrainConfig):
             "view_embedding",
             "cam_pose_encoder",
             "ray_embed",
+            "aux_point_head",
         ]
         for key in missing:
             if not any(name in key for name in allowed_missing):

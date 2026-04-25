@@ -1,10 +1,14 @@
 import dataclasses
+import logging
+import pathlib
 
 import einops
 import numpy as np
 
 from openpi import transforms
 from openpi.models import model as _model
+
+logger = logging.getLogger("openpi.libero_policy")
 
 
 def make_libero_example() -> dict:
@@ -132,6 +136,11 @@ class LiberoInputs(transforms.DataTransformFn):
         if "observation/wrist_intrinsic" in data:
             inputs["wrist_intrinsic"] = _adjust_K_for_openpi_image_flip(data["observation/wrist_intrinsic"])
 
+        # ---- Pi3X distillation targets, when cached upstream by Pi3xLiberoTargetLoader ----
+        for key in ("pi3x_target_xy", "pi3x_target_logz", "pi3x_target_conf"):
+            if key in data:
+                inputs[key] = data[key]
+
         # Pad actions to the model action dimension. Keep this for your own dataset.
         # Actions are only available during training.
         if "actions" in data:
@@ -144,6 +153,46 @@ class LiberoInputs(transforms.DataTransformFn):
             inputs["prompt"] = data["prompt"]
 
         return inputs
+
+
+@dataclasses.dataclass(frozen=True)
+class Pi3xLiberoTargetLoader(transforms.DataTransformFn):
+    """Inject pre-computed Pi3X patch-level distillation targets into the data dict.
+
+    Reads `episode_index` / `frame_index` from the LeRobot row, looks up
+    `{root}/{cam}/episode_{NNNNNN}.npz` for each cam in `cam_to_npz_subdir`, slices
+    the row at `frame_index`, and stacks across cams to produce the V views consumed
+    by the auxiliary point head loss.
+
+    The cam list ordering must match the openpi image insertion order
+    (`base_0_rgb`, `left_wrist_0_rgb`, ...). Padded views (e.g. LIBERO's
+    `right_wrist_0_rgb`) have no teacher target and are excluded — the loss site
+    slices `pred[:, :V]` to match.
+    """
+
+    root: str
+    cam_to_npz_subdir: tuple[tuple[str, str], ...] = (
+        ("base", "agent"),
+        ("left_wrist", "wrist"),
+    )
+
+    def __call__(self, data: dict) -> dict:
+        episode_index = int(np.asarray(data["episode_index"]).item())
+        frame_index = int(np.asarray(data["frame_index"]).item())
+
+        root = pathlib.Path(self.root).expanduser()
+        xy_views, logz_views, conf_views = [], [], []
+        for _, subdir in self.cam_to_npz_subdir:
+            npz_path = root / subdir / f"episode_{episode_index:06d}.npz"
+            with np.load(npz_path, mmap_mode="r") as f:
+                xy_views.append(np.asarray(f["xy"][frame_index], dtype=np.float32))
+                logz_views.append(np.asarray(f["log_z"][frame_index], dtype=np.float32))
+                conf_views.append(np.asarray(f["conf"][frame_index], dtype=np.float32))
+
+        data["pi3x_target_xy"] = np.stack(xy_views, axis=0)  # (V, 16, 16, 2)
+        data["pi3x_target_logz"] = np.stack(logz_views, axis=0)  # (V, 16, 16, 1)
+        data["pi3x_target_conf"] = np.stack(conf_views, axis=0)  # (V, 16, 16, 1)
+        return data
 
 
 @dataclasses.dataclass(frozen=True)

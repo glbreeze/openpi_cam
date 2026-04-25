@@ -100,6 +100,14 @@ class Observation(Generic[ArrayT]):
     agent_intrinsic: at.Float[ArrayT, "*b 3 3"] | None = None
     wrist_intrinsic: at.Float[ArrayT, "*b 3 3"] | None = None
 
+    # Pi3x patch-resolution distillation targets, stacked across views in the order
+    # `(base_0_rgb, left_wrist_0_rgb, ...)`. V is typically 2 for LIBERO (third view
+    # is the padded right_wrist with no teacher target). Set when training with the
+    # `pi3x_targets_root` data config; consumed by the auxiliary point head loss.
+    pi3x_target_xy: at.Float[ArrayT, "*b v ph pw 2"] | None = None
+    pi3x_target_logz: at.Float[ArrayT, "*b v ph pw 1"] | None = None
+    pi3x_target_conf: at.Float[ArrayT, "*b v ph pw 1"] | None = None
+
     # Tokenized prompt.
     tokenized_prompt: at.Int[ArrayT, "*b l"] | None = None
     # Tokenized prompt mask.
@@ -132,6 +140,9 @@ class Observation(Generic[ArrayT]):
             wrist_extrinsic=data.get("wrist_extrinsic"),  # ---- NEW ----
             agent_intrinsic=data.get("agent_intrinsic"),
             wrist_intrinsic=data.get("wrist_intrinsic"),
+            pi3x_target_xy=data.get("pi3x_target_xy"),
+            pi3x_target_logz=data.get("pi3x_target_logz"),
+            pi3x_target_conf=data.get("pi3x_target_conf"),
             tokenized_prompt=data.get("tokenized_prompt"),
             tokenized_prompt_mask=data.get("tokenized_prompt_mask"),
             token_ar_mask=data.get("token_ar_mask"),
@@ -219,6 +230,9 @@ def preprocess_observation(
         wrist_extrinsic=observation.wrist_extrinsic,
         agent_intrinsic=observation.agent_intrinsic,
         wrist_intrinsic=observation.wrist_intrinsic,
+        pi3x_target_xy=observation.pi3x_target_xy,
+        pi3x_target_logz=observation.pi3x_target_logz,
+        pi3x_target_conf=observation.pi3x_target_conf,
         tokenized_prompt=observation.tokenized_prompt,
         tokenized_prompt_mask=observation.tokenized_prompt_mask,
         token_ar_mask=observation.token_ar_mask,
