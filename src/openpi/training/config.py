@@ -828,6 +828,96 @@ _CONFIGS = [
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
     ),
+    # Two-stage curriculum for the full-res Pi3X distillation recipe.
+    #
+    # Stage 1 (5k steps): aux-dominant warmup. action_loss_weight=0.1 keeps the
+    # action heads warming up; aux_point_head.loss_weight=1.0 is the primary signal
+    # that shapes cross_view_fusion / ray_embed / aux_point_head. Init from
+    # pi0_base.
+    #
+    # Stage 2 (30k steps): action-dominant fine-tune. action_loss_weight=1.0 takes
+    # over; aux remains as a regularizer at loss_weight=0.05. Init from Stage 1's
+    # final checkpoint via `pytorch_weight_path` (set manually before launch).
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage1",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=0.1,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=1.0,
+                output_resolution=224,
+            ),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_v3",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_v3",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=str(
+                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+            ),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=5_000,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+    ),
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage2",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=0.05,
+                output_resolution=224,
+            ),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_v3",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_v3",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=str(
+                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+            ),
+        ),
+        # IMPORTANT: replace this with the actual Stage 1 final checkpoint path before
+        # launching Stage 2, e.g.:
+        #   "/path/to/openpi/checkpoints/.../<exp_name>_s1/5000"
+        # Override from the CLI with `--pytorch_weight_path <path>`.
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
     #
     # Fine-tuning Libero configs.
     #

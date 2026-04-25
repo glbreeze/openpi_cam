@@ -34,6 +34,11 @@ class Pi0Config(_model.BaseModelConfig):
     # the zero-init ray_embed / PRoPE modules should learn clean geometric
     # correspondences without per-step K jitter. JAX path currently ignores this.
     disable_geometric_augs: bool = False
+    # Multiplier on the action MSE loss term. Used to implement loss-weight
+    # curricula: e.g. Stage 1 of the two-stage Pi3X distillation recipe sets this
+    # to 0.1 so the auxiliary distillation loss dominates while the action heads
+    # warm up. Stage 2 sets it back to 1.0.
+    action_loss_weight: float = 1.0
 
     # Set the model specific defaults.
     action_dim: int = 32

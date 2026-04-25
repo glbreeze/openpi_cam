@@ -463,6 +463,9 @@ class PI0Pytorch(nn.Module):
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
 
         loss = F.mse_loss(u_t, v_t, reduction="none")
+        # Loss-weight curriculum knob: e.g. set to 0.1 in Stage 1 of the two-stage
+        # Pi3X distillation recipe to let the aux loss dominate while action heads warm up.
+        loss = loss * self.config.action_loss_weight
 
         aux_pred = self.auxiliary_head(fused_tokens)
         if "point" in aux_pred:
