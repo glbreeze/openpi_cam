@@ -529,6 +529,12 @@ class TrainConfig:
     # Specifies which weights should be frozen.
     freeze_filter: tyro.conf.Suppress[Filter] = dataclasses.field(default_factory=nnx.Nothing)
 
+    # PyTorch-only: substring prefixes of parameter names that should remain
+    # trainable; everything else is frozen via `requires_grad_(False)`. Used to
+    # implement the Stage 1 freeze-backbone curriculum without an env var.
+    # The `OPENPI_TRAINABLE_PREFIXES` env var still overrides this when set.
+    trainable_prefixes: tuple[str, ...] = ()
+
     # Determines the data to be trained on.
     data: DataConfigFactory = dataclasses.field(default_factory=FakeDataConfig)
 
@@ -877,6 +883,20 @@ _CONFIGS = [
             peak_lr=2.5e-5,
             decay_steps=5_000,
             decay_lr=2.5e-6,
+        ),
+        # Stage 1 trains ONLY the genuinely-new modules under aux dominance. The
+        # pi0_base backbone (paligemma + gemma_expert) AND the pretrained action
+        # heads (state_proj, action_in_proj, action_out_proj, action_time_mlp_*)
+        # all stay at their pi0_base values. The small `action_loss_weight=0.1`
+        # term still propagates gradient back through the frozen action+expert
+        # path into `cross_view_fusion`, giving it a hint of its eventual
+        # cross-view-fusion job during Stage 1 -- weights that stay frozen
+        # don't update, but gradient still flows. Stage 2 omits this list
+        # entirely -> full unfreeze.
+        trainable_prefixes=(
+            "cross_view_fusion",
+            "ray_embed",
+            "aux_point_head",
         ),
     ),
     TrainConfig(

@@ -205,8 +205,14 @@ def _matches_prefix(name: str, prefixes: list[str]) -> str | None:
     return None
         
 
-def apply_trainable_prefixes(model):
-    trainable_prefixes = _parse_prefixes(os.environ.get("OPENPI_TRAINABLE_PREFIXES"))
+def apply_trainable_prefixes(model, config_prefixes: tuple[str, ...] | None = None):
+    # Env var wins so users can override per-run; otherwise fall back to whatever
+    # the active TrainConfig declares.
+    env_prefixes = _parse_prefixes(os.environ.get("OPENPI_TRAINABLE_PREFIXES"))
+    raw = env_prefixes or list(config_prefixes or ())
+    # Normalize: tyro's tuple-of-str CLI override may pass a single comma-joined
+    # element; split it so both `('a','b')` and `('a,b',)` behave identically.
+    trainable_prefixes = [p.strip() for entry in raw for p in str(entry).split(",") if p.strip()]
     if not trainable_prefixes:
         return
 
@@ -642,7 +648,7 @@ def train_loop(config: _config.TrainConfig):
             logging.info(f"--- model loading ---- Missing keys (expected for new modules): {missing}")
         if unexpected:
             logging.warning(f"--- model loading ---- Unexpected keys in checkpoint: {unexpected}")
-    apply_trainable_prefixes(model)
+    apply_trainable_prefixes(model, config_prefixes=getattr(config, "trainable_prefixes", ()))
 
     # Optimizer + learning rate schedule from config
     warmup_steps = config.lr_schedule.warmup_steps
