@@ -86,18 +86,21 @@ def _prep_images(uint8_imgs: np.ndarray, target_hw: int) -> torch.Tensor:
 
 @torch.no_grad()
 def teacher_patch_forward(
-    model, imgs: torch.Tensor, K: torch.Tensor
+    model, imgs: torch.Tensor, K: torch.Tensor, output_resolution: int = 16
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Run Pi3X (single-view) and return patch-resolution xy / log_z / conf.
+    """Run Pi3X (single-view) and return xy / log_z / conf at the requested resolution.
 
     Args:
-        imgs: (B, 3, H, W) in [0, 1].
+        imgs: (B, 3, H, W) in [0, 1] (H = W = 224).
         K:    (B, 3, 3) intrinsics already in the openpi-flipped, 224-scaled convention.
+        output_resolution: 16 (avg-pool 14x14 -> SigLIP patch grid; ~2 KB/frame)
+                           or 224 (full Pi3X output; ~400 KB/frame).
 
     Returns:
-        xy_patch    : (B, 16, 16, 2) raw xy direction (matches Pi3X point_head output before exp).
-        log_z_patch : (B, 16, 16, 1) raw log-z (matches Pi3X point_head output before exp).
-        conf_patch  : (B, 16, 16, 1) conf logits (pre-sigmoid).
+        xy   : (B, R, R, 2)  raw xy direction (matches Pi3X point_head output before exp)
+        logz : (B, R, R, 1)  raw log-z
+        conf : (B, R, R, 1)  conf logits (pre-sigmoid)
+        where R = output_resolution.
     """
     B, _, H, W = imgs.shape
     patch_h, patch_w = H // 14, W // 14
@@ -128,15 +131,20 @@ def teacher_patch_forward(
     with torch.amp.autocast(device_type="cuda", enabled=False):
         conf_full = model._chunked_conv_head(model.conf_head, conf_feat, patch_h, patch_w)[0]
 
-    # avg-pool 224 -> 16 (kernel=14, stride=14, no overlap)  -- exactly aligns to SigLIP patches
-    xy_patch = F.avg_pool2d(xy_full, kernel_size=14, stride=14)  # (B, 2, 16, 16)
-    log_z_patch = F.avg_pool2d(log_z_full, kernel_size=14, stride=14)  # (B, 1, 16, 16)
-    conf_patch = F.avg_pool2d(conf_full, kernel_size=14, stride=14)  # (B, 1, 16, 16)
+    if output_resolution == 16:
+        # avg-pool 224 -> 16 (kernel=14, stride=14)  -- exactly aligns to SigLIP patches.
+        xy_out = F.avg_pool2d(xy_full, kernel_size=14, stride=14)
+        logz_out = F.avg_pool2d(log_z_full, kernel_size=14, stride=14)
+        conf_out = F.avg_pool2d(conf_full, kernel_size=14, stride=14)
+    elif output_resolution == 224:
+        xy_out, logz_out, conf_out = xy_full, log_z_full, conf_full
+    else:
+        raise ValueError(f"output_resolution must be 16 or 224, got {output_resolution}.")
 
-    xy_patch = xy_patch.permute(0, 2, 3, 1).contiguous()
-    log_z_patch = log_z_patch.permute(0, 2, 3, 1).contiguous()
-    conf_patch = conf_patch.permute(0, 2, 3, 1).contiguous()
-    return xy_patch, log_z_patch, conf_patch
+    xy_out = xy_out.permute(0, 2, 3, 1).contiguous()
+    logz_out = logz_out.permute(0, 2, 3, 1).contiguous()
+    conf_out = conf_out.permute(0, 2, 3, 1).contiguous()
+    return xy_out, logz_out, conf_out
 
 
 def _episode_outputs_exist(output_root: Path, episode_stem: str, cam_names: list[str]) -> bool:
@@ -152,6 +160,7 @@ def _process_episode(
     src_hw: int,
     batch_size: int,
     autocast_dtype: torch.dtype | None,
+    output_resolution: int = 16,
 ):
     columns = ["image", "wrist_image", "agent_intrinsic", "wrist_intrinsic"]
     table = pq.read_table(parquet_path, columns=columns)
@@ -161,6 +170,7 @@ def _process_episode(
         return
     T = len(rows)
     scale = target_hw / src_hw
+    R = output_resolution
 
     for cam in CAM_SPECS:
         out_path = output_root / cam["name"] / f"{parquet_path.stem}.npz"
@@ -181,9 +191,9 @@ def _process_episode(
         K_adj = _adjust_K_openpi(K0, scale)
         K_tensor = torch.from_numpy(K_adj)[None].to(device).expand(batch_size, 3, 3)
 
-        xy_buf = np.empty((T, 16, 16, 2), dtype=np.float16)
-        logz_buf = np.empty((T, 16, 16, 1), dtype=np.float16)
-        conf_buf = np.empty((T, 16, 16, 1), dtype=np.float16)
+        xy_buf = np.empty((T, R, R, 2), dtype=np.float16)
+        logz_buf = np.empty((T, R, R, 1), dtype=np.float16)
+        conf_buf = np.empty((T, R, R, 1), dtype=np.float16)
 
         for start in range(0, T, batch_size):
             end = min(start + batch_size, T)
@@ -197,14 +207,14 @@ def _process_episode(
                 else _nullcontext()
             )
             with ctx:
-                xy_p, logz_p, conf_p = teacher_patch_forward(model, imgs, K_chunk)
+                xy_p, logz_p, conf_p = teacher_patch_forward(model, imgs, K_chunk, output_resolution=R)
 
             xy_buf[start:end] = xy_p.float().cpu().numpy().astype(np.float16)
             logz_buf[start:end] = logz_p.float().cpu().numpy().astype(np.float16)
             conf_buf[start:end] = conf_p.float().cpu().numpy().astype(np.float16)
 
         np.savez(out_path, xy=xy_buf, log_z=logz_buf, conf=conf_buf)
-        logger.info("[done] %s/%s  T=%d -> %s", parquet_path.stem, cam["name"], T, out_path)
+        logger.info("[done] %s/%s  T=%d R=%d -> %s", parquet_path.stem, cam["name"], T, R, out_path)
 
 
 class _nullcontext:
@@ -274,6 +284,14 @@ def main():
     parser.add_argument("--src-hw", type=int, default=256, help="Stored image side; libero default is 256.")
     parser.add_argument("--target-hw", type=int, default=224, help="openpi SigLIP input side; must be 14*16.")
     parser.add_argument(
+        "--output-resolution",
+        type=int,
+        default=16,
+        choices=[16, 224],
+        help="Cache spatial resolution. 16 = avg-pooled patch grid (~2 KB/frame, default). "
+        "224 = full Pi3X output (~400 KB/frame, ~196x more disk).",
+    )
+    parser.add_argument(
         "--episode-range",
         type=str,
         default=None,
@@ -341,6 +359,7 @@ def main():
             src_hw=args.src_hw,
             batch_size=args.batch_size,
             autocast_dtype=autocast_dtype,
+            output_resolution=args.output_resolution,
         )
         if (i + 1) % 10 == 0 or (i + 1) == len(parquet_paths):
             elapsed = time.time() - t0

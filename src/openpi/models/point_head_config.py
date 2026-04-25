@@ -20,3 +20,7 @@ class AuxPointHeadConfig:
     qk_norm: bool = True
     init_values: float = 0.01
     loss_weight: float = 1.0  # scalar weight on the point distillation loss.
+    # 16 -> patch-level prediction (matches the avg-pooled cache; cheap).
+    # 224 -> Pi3X-matched full-resolution prediction with a ConvHead-style upsampler
+    # (heavier; pair with `cache_pi3x_targets.py --output-resolution 224`).
+    output_resolution: int = 16

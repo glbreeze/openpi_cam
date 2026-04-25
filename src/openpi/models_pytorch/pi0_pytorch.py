@@ -118,6 +118,7 @@ class PI0Pytorch(nn.Module):
                 rope_freq=ph_cfg.rope_freq,
                 qk_norm=ph_cfg.qk_norm,
                 init_values=ph_cfg.init_values,
+                output_resolution=ph_cfg.output_resolution,
             )
 
         self.action_in_proj = nn.Linear(32, action_expert_config.width)
