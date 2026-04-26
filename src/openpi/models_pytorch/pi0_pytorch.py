@@ -106,6 +106,13 @@ class PI0Pytorch(nn.Module):
             cross_view_config=self.cross_view_config,
         )
 
+        # Optional warm start of `ray_embed` from Pi3X's pretrained PatchEmbed.
+        # Overrides the zero-init that PaliGemmaWithExpertModel just applied.
+        if config.ray_enc_type and config.ray_embed_pi3x_init_path is not None:
+            self._init_ray_embed_from_pi3x(
+                config.ray_embed_pi3x_init_path, scale=config.ray_embed_pi3x_init_scale
+            )
+
         self.aux_point_head = None
         if config.aux_point_head.enabled:
             ph_cfg = config.aux_point_head
@@ -163,6 +170,69 @@ class PI0Pytorch(nn.Module):
                 raise ValueError(msg)
         except ImportError:
             raise ValueError(msg) from None
+
+    def _init_ray_embed_from_pi3x(self, path: str, *, scale: float):
+        """Warm-start `paligemma_with_expert.ray_embed.proj` from Pi3X's PatchEmbed.
+
+        Pi3X's `ray_embed.proj` has shape (1024, 2, 14, 14) / (1024,). openpi's is
+        (1152, 2, 14, 14) / (1152,) because SigLIP-base/14 has hidden_dim=1152.
+        First 1024 output channels copy from Pi3X (scaled by `scale`); the
+        remaining 128 channels stay at zero (so they don't perturb the last 128
+        dims of pretrained SigLIP patch tokens).
+
+        Raises if the file is missing or has the wrong shape -- silent fallback
+        would hide config errors.
+        """
+        import os
+
+        if scale <= 0:
+            logging.warning(
+                "ray_embed_pi3x_init_path=%s but scale=%g -> skipping (no transfer).", path, scale
+            )
+            return
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"ray_embed_pi3x_init_path={path!r} does not exist. "
+                "Run scripts/dump_pi3x_ray_embed.py first."
+            )
+
+        state = torch.load(path, map_location="cpu", weights_only=True)
+        w_pi3x = state["weight"]
+        b_pi3x = state["bias"]
+
+        ray_embed = self.paligemma_with_expert.ray_embed
+        w_dst = ray_embed.proj.weight
+        b_dst = ray_embed.proj.bias
+
+        expected_pi3x = (1024, 2, 14, 14)
+        if tuple(w_pi3x.shape) != expected_pi3x or tuple(b_pi3x.shape) != (1024,):
+            raise ValueError(
+                f"Unexpected Pi3X ray_embed shapes: weight={tuple(w_pi3x.shape)} bias={tuple(b_pi3x.shape)}; "
+                f"expected weight={expected_pi3x} bias=(1024,)."
+            )
+        if w_dst.shape[1:] != w_pi3x.shape[1:]:
+            raise ValueError(
+                f"openpi ray_embed weight shape {tuple(w_dst.shape)} is incompatible with Pi3X "
+                f"{tuple(w_pi3x.shape)} on the kernel dims."
+            )
+        if w_dst.shape[0] < w_pi3x.shape[0]:
+            raise ValueError(
+                f"openpi ray_embed has fewer output channels ({w_dst.shape[0]}) than Pi3X "
+                f"({w_pi3x.shape[0]}); transfer requires openpi >= Pi3X."
+            )
+
+        with torch.no_grad():
+            w_dst.zero_()
+            b_dst.zero_()
+            w_dst[:1024].copy_(w_pi3x.to(dtype=w_dst.dtype) * scale)
+            b_dst[:1024].copy_(b_pi3x.to(dtype=b_dst.dtype) * scale)
+        logging.info(
+            "Initialized paligemma_with_expert.ray_embed.proj from Pi3X (%s, scale=%g): "
+            "first 1024 of %d output channels populated; remaining zero.",
+            path,
+            scale,
+            w_dst.shape[0],
+        )
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing for memory optimization."""

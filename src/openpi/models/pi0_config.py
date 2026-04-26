@@ -39,6 +39,14 @@ class Pi0Config(_model.BaseModelConfig):
     # to 0.1 so the auxiliary distillation loss dominates while the action heads
     # warm up. Stage 2 sets it back to 1.0.
     action_loss_weight: float = 1.0
+    # Optional path to a .pt file produced by `scripts/dump_pi3x_ray_embed.py`
+    # containing Pi3X's pretrained `ray_embed.proj.{weight, bias}`. When set, the
+    # `ray_embed` Conv2d's first 1024 output channels are filled from Pi3X (scaled
+    # by `ray_embed_pi3x_init_scale`); the remaining 128 channels stay at zero.
+    # Pi0Pytorch raises if the file is missing -- silent fallback to zero-init
+    # would hide config errors.
+    ray_embed_pi3x_init_path: str | None = None
+    ray_embed_pi3x_init_scale: float = 1.0
 
     # Set the model specific defaults.
     action_dim: int = 32
