@@ -1,5 +1,6 @@
 # Data directories.
-assets/
+assets/*
+!assets/pi3x_init/
 checkpoints/
 data/
 wandb/

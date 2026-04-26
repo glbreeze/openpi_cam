@@ -923,8 +923,9 @@ _CONFIGS = [
                 loss_weight=1.0,
                 output_resolution=224,
             ),
+            # Shipped in-repo at assets/pi3x_init/ray_embed.pt (~1.6 MB).
             ray_embed_pi3x_init_path=str(
-                pathlib.Path("~/.cache/openpi/pi3x_init/ray_embed.pt").expanduser()
+                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
             ),
             ray_embed_pi3x_init_scale=1.0,
         ),
