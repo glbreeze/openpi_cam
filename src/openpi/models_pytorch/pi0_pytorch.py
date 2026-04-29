@@ -161,6 +161,7 @@ class PI0Pytorch(nn.Module):
 
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
+        self.last_loss_breakdown: dict[str, float] = {}
 
         msg = "transformers_replace is not installed correctly. Please install it with `uv pip install transformers==4.53.2` and `cp -r ./src/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/`."
         try:
@@ -532,10 +533,13 @@ class PI0Pytorch(nn.Module):
 
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
 
-        loss = F.mse_loss(u_t, v_t, reduction="none")
+        action_loss_raw = F.mse_loss(u_t, v_t, reduction="none")
         # Loss-weight curriculum knob: e.g. set to 0.1 in Stage 1 of the two-stage
         # Pi3X distillation recipe to let the aux loss dominate while action heads warm up.
-        loss = loss * self.config.action_loss_weight
+        loss = action_loss_raw * self.config.action_loss_weight
+        aux_loss = torch.zeros((), dtype=loss.dtype, device=loss.device)
+        aux_xy_loss = torch.zeros((), dtype=loss.dtype, device=loss.device)
+        aux_z_loss = torch.zeros((), dtype=loss.dtype, device=loss.device)
 
         aux_pred = self.auxiliary_head(fused_tokens)
         if "point" in aux_pred:
@@ -568,10 +572,19 @@ class PI0Pytorch(nn.Module):
                 w_pix = w_pix * view_mask[:, :, None, None]
 
                 denom = w_pix.sum().clamp_min(1.0)
-                xy_loss = ((xy_pred_v - xy_tgt_f) ** 2 * w_pix).sum() / denom / xy_pred_v.shape[-1]
-                z_loss = ((z_pred_v - logz_tgt_f) ** 2 * w_pix).sum() / denom
+                aux_xy_loss = ((xy_pred_v - xy_tgt_f) ** 2 * w_pix).sum() / denom / xy_pred_v.shape[-1]
+                aux_z_loss = ((z_pred_v - logz_tgt_f) ** 2 * w_pix).sum() / denom
+                aux_loss = w * (aux_xy_loss + aux_z_loss)
 
-                loss = loss + w * (xy_loss + z_loss)
+                loss = loss + aux_loss
+
+        self.last_loss_breakdown = {
+            "action_loss_raw": float(action_loss_raw.mean().detach()),
+            "action_loss": float(loss.mean().detach() - aux_loss.detach()),
+            "aux_loss": float(aux_loss.detach()),
+            "aux_xy_loss": float(aux_xy_loss.detach()),
+            "aux_z_loss": float(aux_z_loss.detach()),
+        }
 
         return loss
 

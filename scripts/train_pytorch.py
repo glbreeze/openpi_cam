@@ -81,6 +81,9 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, enabled: bool = T
 
     wandb_root_dir = os.environ.get("WANDB_DIR")
     wandb_kwargs = {"project": config.project_name}
+    wandb_entity = os.environ.get("WANDB_ENTITY")
+    if wandb_entity:
+        wandb_kwargs["entity"] = wandb_entity
     if wandb_root_dir:
         logging.info(f"Initializing wandb with root dir: {wandb_root_dir}")
         wandb_kwargs["dir"] = wandb_root_dir
@@ -695,6 +698,10 @@ def train_loop(config: _config.TrainConfig):
         logging.info("EMA is not supported for PyTorch training")
         logging.info(f"Training precision: {model_cfg.dtype}")
 
+    def get_module_loss_breakdown():
+        module = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
+        return getattr(module, "last_loss_breakdown", {})
+
     # Training loop - iterate until we reach num_train_steps
     pbar = (
         tqdm.tqdm(total=config.num_train_steps, initial=global_step, desc="Training", disable=not is_main)
@@ -762,13 +769,15 @@ def train_loop(config: _config.TrainConfig):
 
             # Collect stats
             if is_main:
-                infos.append(
-                    {
-                        "loss": loss.item(),
-                        "learning_rate": optim.param_groups[0]["lr"],
-                        "grad_norm": float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm,
-                    }
-                )
+                info = {
+                    "loss": loss.item(),
+                    "learning_rate": optim.param_groups[0]["lr"],
+                    "grad_norm": float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm,
+                }
+                for key, value in get_module_loss_breakdown().items():
+                    if isinstance(value, int | float):
+                        info[key] = float(value)
+                infos.append(info)
 
             if is_main and (global_step % config.log_interval == 0):
                 elapsed = time.time() - start_time
@@ -784,11 +793,28 @@ def train_loop(config: _config.TrainConfig):
                     ]
                     if len(vals) > 0:
                         avg_grad_norm = sum(vals) / len(vals)
+                extra_metric_keys = (
+                    "action_loss",
+                    "action_loss_raw",
+                    "aux_loss",
+                    "aux_xy_loss",
+                    "aux_z_loss",
+                )
+                avg_extra_metrics = {}
+                for key in extra_metric_keys:
+                    vals = [info[key] for info in infos if key in info]
+                    if vals:
+                        avg_extra_metrics[key] = sum(vals) / len(vals)
                 logging.info(
                     f"step={global_step} loss={avg_loss:.4f} lr={avg_lr:.2e} grad_norm={avg_grad_norm:.2f} time={elapsed:.1f}s"
                     if avg_grad_norm is not None
                     else f"step={global_step} loss={avg_loss:.4f} lr={avg_lr:.2e} time={elapsed:.1f}s"
                 )
+                if avg_extra_metrics:
+                    logging.info(
+                        "loss_breakdown "
+                        + " ".join(f"{key}={value:.4f}" for key, value in avg_extra_metrics.items())
+                    )
 
                 # Log to wandb
                 if config.wandb_enabled and len(infos) > 0:
@@ -800,6 +826,7 @@ def train_loop(config: _config.TrainConfig):
                     }
                     if avg_grad_norm is not None:
                         log_payload["grad_norm"] = avg_grad_norm
+                    log_payload.update(avg_extra_metrics)
                     wandb.log(log_payload, step=global_step)
 
                 start_time = time.time()
