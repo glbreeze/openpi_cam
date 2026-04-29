@@ -1,9 +1,11 @@
 
 
-  - Ray embed (intrinsics): ray_enc_type=True on Pi0Config. Zero-init PatchEmbed(in=2, D) in gemma_pytorch.py:528, applied post-SigLIP pre-projector at gemma_pytorch.py:590-598 (K⁻¹·pix → xy/z).                                                                              
-  - PRoPE (extrinsics): pose_enc_type="prope" + cross_view.prope_layer_idx=(...). PoseInjectBlock uses prope.prepare_apply_fns, inserted after global blocks in CrossViewFusion (gemma_pytorch.py:305-355).                                                                     
-  - Cross-view attention: cross_view.type="standard", aa_order="fg" — CrossViewFusion alternates frame and global blocks (gemma_pytorch.py:249-378).  
-  - Cam_emb_type 
+- **Ray embed (intrinsics)** — `Pi0Config.ray_enc_type=True`. A zero-init `PatchEmbed(in=2, D)` (`gemma_pytorch.py:522-527`) maps per-pixel rays `K⁻¹·pix → xy/z` and is added to SigLIP patch tokens before the pre-projector (`gemma_pytorch.py:578-605`). Zero-init keeps the pretrained baseline identical at step 0; views without a real `K` are masked out so the identity fallback doesn't drive gradients.
+- **PRoPE (extrinsics)** — `pose_enc_type="prope"` with `cross_view.prope_layer_idx=(...)` selecting which global blocks receive pose injection. `PoseInjectBlock` (`gemma_pytorch.py:139-207`) calls `prope.prepare_apply_fns` to bake W2C extrinsics into Q/K/V rotations, and is spliced in after the chosen global blocks of `CrossViewFusion`.
+- **Cross-view attention** — `cross_view.type="standard"`, `aa_order="fg"`: `CrossViewFusion` (`gemma_pytorch.py:209-376`) alternates per-frame and global attention blocks.
+- **Flag ranges**
+  - `pose_enc_type ∈ {"null", "relative_pose", "absolute_pose", "prope"}`
+  - `cross_view.type  ∈ {"none", "simple", "standard"}`
   
 | Head        | Decoder → Head                                      | Output shape                                                  | What it predicts                          |
 |-------------|-----------------------------------------------------|----------------------------------------------------------------|-------------------------------------------|

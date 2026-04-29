@@ -560,15 +560,16 @@ class PI0Pytorch(nn.Module):
                 xy_pred_v = xy_pred[:, :v_tgt]
                 z_pred_v = z_pred[:, :v_tgt]
 
-                # Confidence gate matches Pi3X's demo masking (`sigmoid(conf) > 0.1`),
-                # weighted by the per-view image_mask so dropped views contribute zero.
-                mask = (torch.sigmoid(conf_tgt_f) > 0.1).to(xy_pred.dtype)  # (B, V_t, P, 1)
+                # Soft confidence weighting: w_pix = sigmoid(conf_tgt), matching Pi3's
+                # native distillation loss (vs. a hard sigmoid>0.1 gate). Per-view
+                # image_mask zeros out dropped views.
+                w_pix = torch.sigmoid(conf_tgt_f).to(xy_pred.dtype)  # (B, V_t, P, 1)
                 view_mask = img_masks[:, :v_tgt].to(xy_pred.dtype)  # (B, V_t)
-                mask = mask * view_mask[:, :, None, None]
+                w_pix = w_pix * view_mask[:, :, None, None]
 
-                denom = mask.sum().clamp_min(1.0)
-                xy_loss = ((xy_pred_v - xy_tgt_f) ** 2 * mask).sum() / denom / xy_pred_v.shape[-1]
-                z_loss = ((z_pred_v - logz_tgt_f) ** 2 * mask).sum() / denom
+                denom = w_pix.sum().clamp_min(1.0)
+                xy_loss = ((xy_pred_v - xy_tgt_f) ** 2 * w_pix).sum() / denom / xy_pred_v.shape[-1]
+                z_loss = ((z_pred_v - logz_tgt_f) ** 2 * w_pix).sum() / denom
 
                 loss = loss + w * (xy_loss + z_loss)
 
