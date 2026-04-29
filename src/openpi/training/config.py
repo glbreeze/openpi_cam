@@ -956,6 +956,60 @@ _CONFIGS = [
             "aux_point_head",
         ),
     ),
+    # Stage 1 variant aligned with the deeper fgfg Stage 2 recipe. This keeps
+    # the Stage 1 loss curriculum / trainable-prefix freeze, but matches
+    # Stage 2's cross-view topology up front so the full fusion stack can be
+    # pretrained under aux dominance before the action-dominant fine-tune.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage1_fgfg_pi3xray",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fgfg",
+                prope_layer_idx=(0, 1),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=0.1,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=1.0,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=str(
+                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
+            ),
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_v3",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_v3",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=str(
+                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+            ),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=5_000,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+        trainable_prefixes=(
+            "cross_view_fusion",
+            "ray_embed",
+            "aux_point_head",
+        ),
+    ),
     TrainConfig(
         name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage2",
         model=pi0_config.Pi0Config(
