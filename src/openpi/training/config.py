@@ -23,6 +23,7 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.robotwin_policy as robotwin_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
@@ -293,6 +294,38 @@ class LeRobotAlohaDataConfig(DataConfigFactory):
             data_transforms=data_transforms,
             model_transforms=model_transforms,
             action_sequence_keys=self.action_sequence_keys,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotRobotwinDataConfig(DataConfigFactory):
+    # If true, convert joint dimensions to deltas while keeping grippers absolute.
+    use_delta_joint_actions: bool = True
+    # If provided, inject this prompt when dataset/inference inputs do not already contain one.
+    default_prompt: str | None = None
+    # If true, map the Aloha-style joint/gripper conventions into the pi pretraining convention.
+    adapt_to_pi: bool = True
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        data_transforms = _transforms.Group(
+            inputs=[robotwin_policy.RobotwinInputs(model_type=model_config.model_type, adapt_to_pi=self.adapt_to_pi)],
+            outputs=[robotwin_policy.RobotwinOutputs(adapt_to_pi=self.adapt_to_pi)],
+        )
+        if self.use_delta_joint_actions:
+            delta_action_mask = _transforms.make_bool_mask(6, -1, 6, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_action_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            )
+
+        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            action_sequence_keys=("action",),
         )
 
 
@@ -1462,6 +1495,32 @@ _CONFIGS = [
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
         num_train_steps=20_000,
+    ),
+    TrainConfig(
+        name="pi0_robotwin",
+        model=pi0_config.Pi0Config(),
+        data=LeRobotRobotwinDataConfig(
+            repo_id="lerobot/robotwin_unified",
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        assets_base_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        batch_size=32,
+    ),
+    TrainConfig(
+        name="pi0_robotwin_smoke",
+        model=pi0_config.Pi0Config(),
+        data=LeRobotRobotwinDataConfig(
+            repo_id="lerobot/robotwin_unified",
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        assets_base_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        batch_size=2,
+        num_train_steps=20,
+        save_interval=100,
+        wandb_enabled=False,
     ),
     #
     # Debugging configs.
