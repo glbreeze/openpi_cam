@@ -57,6 +57,10 @@ def _ensure_libero_imports(libero_repo: Path | None):
 def _postprocess_model_xml(model_xml, libero_utils, libero_repo: Path | None):
     xml_str = libero_utils.postprocess_model_xml(_as_text(model_xml), {})
     root = ET.fromstring(xml_str)
+    compiler = root.find("compiler")
+    if compiler is None:
+        compiler = ET.SubElement(root, "compiler")
+    compiler.set("autolimits", "true")
     local_assets_root = (
         libero_repo / "libero" / "libero" / "assets"
         if libero_repo is not None
