@@ -124,6 +124,11 @@ def _adjust_and_scale_k(K: np.ndarray, src_hw: int, target_hw: int) -> np.ndarra
 
 
 def _resize_depth(depth: np.ndarray, target_hw: int) -> np.ndarray:
+    depth = np.asarray(depth, dtype=np.float32)
+    if depth.ndim == 3 and depth.shape[-1] == 1:
+        depth = depth[..., 0]
+    if depth.ndim != 2:
+        raise ValueError(f"Expected depth with shape (H, W) or (H, W, 1), got {depth.shape}")
     depth_t = torch.from_numpy(depth[None, None].astype(np.float32))
     if depth_t.shape[-1] != target_hw or depth_t.shape[-2] != target_hw:
         depth_t = functional.interpolate(depth_t, size=(target_hw, target_hw), mode="nearest")
@@ -171,7 +176,10 @@ def _append_target_from_depth(
     target_resolution: int,
     output_resolution: int,
 ):
-    depth = np.asarray(depth, dtype=np.float32)[::-1, ::-1].copy()
+    depth = np.asarray(depth, dtype=np.float32)
+    if depth.ndim == 3 and depth.shape[-1] == 1:
+        depth = depth[..., 0]
+    depth = depth[::-1, ::-1].copy()
     depth = _resize_depth(depth, target_resolution)
     K = _adjust_and_scale_k(K, src_hw, target_resolution)
     xy, log_z, conf = _depth_to_targets(depth, K)
