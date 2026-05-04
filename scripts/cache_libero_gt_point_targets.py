@@ -64,6 +64,8 @@ def _postprocess_model_xml(model_xml, libero_utils, libero_repo: Path | None):
     )
     for tag in ("mesh", "texture"):
         for elem in root.iter(tag):
+            if tag == "texture":
+                elem.attrib.pop("colorspace", None)
             file_path = elem.get("file")
             if not file_path:
                 continue
@@ -76,6 +78,25 @@ def _postprocess_model_xml(model_xml, libero_utils, libero_repo: Path | None):
             if candidate.exists():
                 elem.set("file", str(candidate))
     return ET.tostring(root, encoding="utf8").decode("utf8")
+
+
+def _resolve_bddl_file_name(bddl_file_name, libero_repo: Path | None) -> str:
+    bddl_path = Path(_as_text(bddl_file_name))
+    if bddl_path.is_absolute() or libero_repo is None:
+        return str(bddl_path)
+
+    normalized = str(bddl_path).replace("\\", "/")
+    marker = "bddl_files/"
+    if marker in normalized:
+        suffix = normalized.split(marker, 1)[1]
+        candidate = libero_repo / "libero" / "libero" / "bddl_files" / suffix
+        if candidate.exists():
+            return str(candidate)
+
+    candidate = libero_repo / bddl_path
+    if candidate.exists():
+        return str(candidate)
+    return str(bddl_path)
 
 
 def _get_camera_intrinsic(sim, camera_name: str, image_h: int, image_w: int) -> np.ndarray:
@@ -156,7 +177,7 @@ def _append_target_from_depth(
     per_cam[out_name]["conf"].append(conf.astype(np.float16))
 
 
-def _init_env(h5_file, render_resolution: int, libero_utils, TASK_MAPPING):
+def _init_env(h5_file, render_resolution: int, libero_utils, TASK_MAPPING, libero_repo: Path | None):
     env_name = h5_file["data"].attrs.get("env", h5_file["data"].attrs.get("env_name"))
     env_args_raw = h5_file["data"].attrs.get("env_args")
     env_info_raw = h5_file["data"].attrs.get("env_info")
@@ -170,7 +191,7 @@ def _init_env(h5_file, render_resolution: int, libero_utils, TASK_MAPPING):
 
     problem_info = json.loads(_as_text(h5_file["data"].attrs["problem_info"]))
     problem_name = problem_info["problem_name"]
-    bddl_file_name = _as_text(h5_file["data"].attrs["bddl_file_name"])
+    bddl_file_name = _resolve_bddl_file_name(h5_file["data"].attrs["bddl_file_name"], libero_repo)
     libero_utils.update_env_kwargs(
         env_kwargs,
         bddl_file_name=bddl_file_name,
@@ -250,7 +271,7 @@ def main():
                     )
 
                 if env is None:
-                    env = _init_env(f, args.render_resolution, libero_utils, TASK_MAPPING)
+                    env = _init_env(f, args.render_resolution, libero_utils, TASK_MAPPING, libero_repo)
 
                 model_xml = _postprocess_model_xml(ep_group.attrs["model_file"], libero_utils, libero_repo)
                 per_cam = {name: {"xy": [], "log_z": [], "conf": []} for name in out_paths}
