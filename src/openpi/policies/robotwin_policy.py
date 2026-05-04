@@ -24,8 +24,8 @@ def _parse_image(image) -> np.ndarray:
     image = np.asarray(image)
     if np.issubdtype(image.dtype, np.floating):
         image = (255 * image).astype(np.uint8)
-    if image.ndim == 3 and image.shape[0] == 3:
-        image = np.transpose(image, (1, 2, 0))
+    if image.ndim == 3 and image.shape[-1] == 3:
+        image = np.transpose(image, (2, 0, 1))
     return image
 
 
@@ -49,6 +49,7 @@ class RobotwinInputs(transforms.DataTransformFn):
 
     Supports either:
     - direct LeRobot-style flat keys, e.g. `observation.images.head_camera`, `observation.state`, `action`
+    - official RoboTwin-converted keys, e.g. `observation.images.cam_high`
     - a simpler inference-style structure with `images`, `state`, and optional `actions` / `prompt`
     """
 
@@ -60,23 +61,26 @@ class RobotwinInputs(transforms.DataTransformFn):
             source_images = data["images"]
             state = np.asarray(_get_first(data, "state", "observation.state", "observation/state"), dtype=np.float32)
             actions = _maybe_get_first(data, "actions", "action")
-            prompt = _maybe_get_first(data, "prompt")
+            prompt = _maybe_get_first(data, "prompt", "task")
         else:
             source_images = {
                 "head_camera": _get_first(
                     data,
+                    "observation.images.cam_high",
                     "observation.images.head_camera",
                     "observation/image",
                     "high_image",
                 ),
                 "left_camera": _get_first(
                     data,
+                    "observation.images.cam_left_wrist",
                     "observation.images.left_camera",
                     "observation/wrist_image_left",
                     "left_wrist_image",
                 ),
                 "right_camera": _get_first(
                     data,
+                    "observation.images.cam_right_wrist",
                     "observation.images.right_camera",
                     "observation/wrist_image_right",
                     "right_wrist_image",
@@ -84,7 +88,7 @@ class RobotwinInputs(transforms.DataTransformFn):
             }
             state = np.asarray(_get_first(data, "observation.state", "observation/state", "state"), dtype=np.float32)
             actions = _maybe_get_first(data, "action", "actions")
-            prompt = _maybe_get_first(data, "prompt")
+            prompt = _maybe_get_first(data, "prompt", "task")
 
         aloha_like = {
             "state": state,

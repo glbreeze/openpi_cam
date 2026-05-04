@@ -74,6 +74,10 @@ export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
 If you need policy eval inside the `policy/pi0/.venv` flow from the official docs, follow the upstream Pi0 page. For this repo, training stays in `openpi_cam`; RoboTwin is only the simulator/eval repo.
 
+### Raw data note
+
+As of 2026-05-03, RoboTwin officially publishes the large-scale dataset as `lerobot/robotwin_unified`, but the official `pi0` conversion pipeline expects raw collected episodes under `data/${task_name}/${task_config}`. The official route to obtain that raw layout is `collect_data.sh`, not a standalone raw-data download script.
+
 ## Phase 1 Commands
 
 ### 1. Download the dataset on a CPU node
@@ -115,13 +119,60 @@ This uses the local config `pi0_robotwin_smoke`.
 
 ## Fallback Path
 
-If direct use of `lerobot/robotwin_unified` fails for any upstream LeRobot compatibility reason, switch to the official RoboTwin Pi0 pipeline:
+If direct use of `lerobot/robotwin_unified` fails for any upstream LeRobot compatibility reason, switch to the official RoboTwin Pi0 pipeline.
 
-1. `bash process_data_pi0.sh ${task_name} ${task_config} ${expert_data_num}`
-2. `bash generate.sh ${hdf5_path} ${repo_id}`
-3. point this repo's `repo_id` to the generated local LeRobot dataset
+In this repo, the official logic is mirrored from RoboTwin upstream into:
 
-The official Pi0 doc places those scripts under `RoboTwin/policy/pi0/`.
+- [robotwin_official_process_data.py](/scratch/yp2841/geometry-vla/openpi_cam/scripts/robotwin_official_process_data.py:1)
+- [convert_aloha_data_to_lerobot_robotwin_official.py](/scratch/yp2841/geometry-vla/openpi_cam/scripts/convert_aloha_data_to_lerobot_robotwin_official.py:1)
+- [convert_robotwin_official_cpu.sbatch](/scratch/yp2841/geometry-vla/openpi_cam/scripts/sbatch/convert_robotwin_official_cpu.sbatch:1)
+
+These mirror the official files as of 2026-05-03:
+
+- `policy/pi0/process_data_pi0.sh`
+- `policy/pi0/scripts/process_data.py`
+- `policy/pi0/generate.sh`
+- `policy/pi0/examples/aloha_real/convert_aloha_data_to_lerobot_robotwin.py`
+
+Expected raw data layout:
+
+```text
+/scratch/yp2841/geometry-vla/RoboTwin/data/
+└── beat_block_hammer/
+    └── demo_clean/
+        ├── data/episode0.hdf5
+        └── instructions/episode0.json
+```
+
+Collect raw episodes with official RoboTwin on L40S:
+
+```bash
+cd /scratch/yp2841/geometry-vla/openpi_cam
+sbatch --export=ALL,TASK_NAME=beat_block_hammer,TASK_CONFIG=demo_clean,ROBOTWIN_CONDA_ENV=robotwin scripts/sbatch/collect_robotwin_raw_l40s.sbatch
+```
+
+Run official conversion on HPC:
+
+```bash
+cd /scratch/yp2841/geometry-vla/openpi_cam
+sbatch \
+  --export=ALL,TASK_NAME=beat_block_hammer,TASK_CONFIG=demo_clean,EXPERT_DATA_NUM=50,RAW_ROOT=/scratch/yp2841/geometry-vla/RoboTwin/data,REPO_ID=robotwin/beat_block_hammer_demo_clean_50 \
+  scripts/sbatch/convert_robotwin_official_cpu.sbatch
+```
+
+Then compute stats against the converted local repo id:
+
+```bash
+cd /scratch/yp2841/geometry-vla/openpi_cam
+sbatch --export=ALL,CONFIG_NAME=pi0_robotwin_smoke,REPO_ID=robotwin/beat_block_hammer_demo_clean_50 scripts/sbatch/compute_norm_stats_robotwin.sbatch
+```
+
+Then launch smoke training:
+
+```bash
+cd /scratch/yp2841/geometry-vla/openpi_cam
+sbatch --export=ALL,DATASET_REPO_ID=robotwin/beat_block_hammer_demo_clean_50,NORM_ASSET_ID=robotwin/beat_block_hammer_demo_clean_50 scripts/sbatch/train_pi0_robotwin_smoke.sbatch
+```
 
 ## Notes
 

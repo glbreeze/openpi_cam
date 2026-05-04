@@ -1517,7 +1517,7 @@ _CONFIGS = [
         ),
         assets_base_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
-        batch_size=2,
+        batch_size=1,
         num_train_steps=20,
         save_interval=100,
         wandb_enabled=False,
