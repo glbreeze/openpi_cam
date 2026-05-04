@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=pi0_cam_v3_fr_s2_fgfg_r
+#SBATCH --job-name=pi0_cam_v3_fr_s2_zero
 #SBATCH --output=/scratch/yp2841/geometry-vla/openpi_cam/log/pi0_libero_object_ft/slurm-%j.out
 #SBATCH --error=/scratch/yp2841/geometry-vla/openpi_cam/log/pi0_libero_object_ft/slurm-%j.err
 #SBATCH --nodes=1
@@ -50,8 +50,7 @@ if [[ -z "${REPO_ROOT}" ]]; then
 fi
 
 export USE_CAM=true
-export RESUME=true
-export CONFIG_NAME=pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage2_fgfg
+export CONFIG_NAME=pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage2
 export TRAIN_RECIPE=single_stage
 export WANDB_ENABLED=true
 export WANDB_PROJECT=pi0_libero_cam
@@ -67,7 +66,7 @@ export KEEP_PERIOD=5000
 
 export DATASET_REPO_ID=glbreeze/libero_object_cam_v3
 export NORM_ASSET_ID=glbreeze/libero_object_cam_v3
-export EXP_NAME=pi0_libero_object_cam_v3_prope_ray_view_distill_fullres_twostage_v1_stage2_fgfg
-export PYTORCH_WEIGHT_PATH_OVERRIDE="${REPO_ROOT}/checkpoints/pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage1_fgfg_pi3xray/pi0_libero_object_cam_v3_prope_ray_view_distill_fullres_twostage_v1_stage1_fgfg_pi3xray_l40s/5000"
+export EXP_NAME=pi0_libero_object_cam_v3_prope_ray_view_distill_fullres_twostage_v1_stage2_zeroinit_l40s
+export PYTORCH_WEIGHT_PATH_OVERRIDE="${REPO_ROOT}/checkpoints/pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage1/pi0_libero_object_cam_v3_prope_ray_view_distill_fullres_twostage_v1_stage1_l40s/5000"
 
 exec bash "${REPO_ROOT}/scripts/sbatch/train_pi0_libero_object_ft.sbatch"

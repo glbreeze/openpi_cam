@@ -54,6 +54,8 @@ USE_CAM=${USE_CAM:-false}
 RESUME=${RESUME:-false}
 WANDB_ENABLED=${WANDB_ENABLED:-true}
 WANDB_PROJECT=${WANDB_PROJECT:-openpi_cam_libero_object}
+WANDB_ENTITY=${WANDB_ENTITY:-}
+WANDB_API_KEY_OVERRIDE=${WANDB_API_KEY_OVERRIDE:-}
 NUM_GPUS=${NUM_GPUS:-${SLURM_GPUS_ON_NODE:-4}}
 NUM_WORKERS=${NUM_WORKERS:-16}
 BATCH_SIZE=${BATCH_SIZE:-32}
@@ -70,6 +72,8 @@ MODEL_PROPE_LAYER_IDX=${MODEL_PROPE_LAYER_IDX:-}
 MODEL_CROSS_VIEW_AA_ORDER=${MODEL_CROSS_VIEW_AA_ORDER:-}
 CROSS_VIEW_TYPE=${CROSS_VIEW_TYPE:-}
 TRAIN_RECIPE=${TRAIN_RECIPE:-auto}
+PYTORCH_WEIGHT_PATH_OVERRIDE=${PYTORCH_WEIGHT_PATH_OVERRIDE:-}
+PI3X_TARGETS_ROOT_OVERRIDE=${PI3X_TARGETS_ROOT_OVERRIDE:-}
 SIMPLE_STAGE1_STEPS=${SIMPLE_STAGE1_STEPS:-5000}
 SIMPLE_STAGE2_STEPS=${SIMPLE_STAGE2_STEPS:-55000}
 SIMPLE_STAGE1_WARMUP_STEPS=${SIMPLE_STAGE1_WARMUP_STEPS:-500}
@@ -148,6 +152,33 @@ mkdir -p \
   "${OPENPI_CACHE_DIR}" \
   "${CHECKPOINT_BASE_DIR}"
 
+mkdir -p "${HOME}/.cache/openpi"
+
+link_openpi_cache_dir() {
+  local link_name=$1
+  local target_dir="${OPENPI_CACHE_DIR}/${link_name}"
+  local link_path="${HOME}/.cache/openpi/${link_name}"
+
+  [[ -d "${target_dir}" ]] || return 0
+
+  if [[ -L "${link_path}" ]]; then
+    local current_target
+    current_target=$(readlink -- "${link_path}")
+    if [[ "${current_target}" == "${target_dir}" ]]; then
+      return 0
+    fi
+    rm -f -- "${link_path}"
+  elif [[ -e "${link_path}" ]]; then
+    echo "Cache link path already exists and is not a symlink: ${link_path}" >&2
+    exit 1
+  fi
+
+  ln -s "${target_dir}" "${link_path}"
+}
+
+link_openpi_cache_dir "pi3x_targets"
+link_openpi_cache_dir "pi3x_targets_224"
+
 if [[ "${NUM_GPUS}" -lt 1 ]]; then
   echo "NUM_GPUS must be >= 1, got ${NUM_GPUS}" >&2
   exit 1
@@ -164,7 +195,12 @@ export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 if [[ "${WANDB_ENABLED}" == "true" ]]; then
   unset WANDB_DIR WANDB_CACHE_DIR WANDB_CONFIG_DIR WANDB_DATA_DIR
-  export WANDB_API_KEY="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"
+  if [[ -n "${WANDB_API_KEY_OVERRIDE}" ]]; then
+    export WANDB_API_KEY="${WANDB_API_KEY_OVERRIDE}"
+  elif [[ -z "${WANDB_API_KEY:-}" ]]; then
+    echo "WANDB_ENABLED=true requires WANDB_API_KEY or WANDB_API_KEY_OVERRIDE" >&2
+    exit 1
+  fi
   export WANDB_DIR="${JOB_TMP_ROOT}/wandb_root"
   export WANDB_CACHE_DIR="${JOB_TMP_ROOT}/wandb_cache"
   export WANDB_CONFIG_DIR="${JOB_TMP_ROOT}/wandb_config"
@@ -233,6 +269,12 @@ build_train_args() {
     --data.assets.asset_id "${NORM_ASSET_ID}"
     "${wand_arg}"
   )
+
+  if [[ -n "${PI3X_TARGETS_ROOT_OVERRIDE}" ]]; then
+    out_args+=(
+      --data.pi3x_targets_root "${PI3X_TARGETS_ROOT_OVERRIDE}"
+    )
+  fi
 
   if [[ "${USE_CAM}" == "true" ]]; then
     if [[ -n "${MODEL_POSE_ENC_TYPE}" ]]; then
@@ -391,11 +433,15 @@ echo "base model: ${BASE_MODEL_DIR}"
 echo "norm stats: ${NORM_STATS_DIR}"
 echo "checkpoints: ${CHECKPOINT_BASE_DIR}"
 echo "wandb root: ${WANDB_DIR:-disabled}"
+echo "wandb project: ${WANDB_PROJECT}"
+echo "wandb entity: ${WANDB_ENTITY:-<default>}"
 echo "num_gpus: ${NUM_GPUS}"
 echo "batch_size: ${BATCH_SIZE}"
 echo "num_train_steps: ${NUM_TRAIN_STEPS}"
 echo "save_interval: ${SAVE_INTERVAL}"
 echo "keep_period: ${KEEP_PERIOD}"
+echo "pytorch_weight_path_override: ${PYTORCH_WEIGHT_PATH_OVERRIDE:-<none>}"
+echo "pi3x_targets_root_override: ${PI3X_TARGETS_ROOT_OVERRIDE:-<none>}"
 which python
 python -V
 hostname
@@ -469,10 +515,15 @@ if [[ "${TRAIN_RECIPE}" == "simple_two_stage" ]]; then
     run_training_command "simple_stage2_joint" "${WANDB_ENABLED}" "" "${SIMPLE_STAGE2_LR_MULTIPLIERS}" "${SIMPLE_STAGE2_ARGS[@]}"
   fi
 else
+  SINGLE_STAGE_WEIGHT_PATH="${BASE_MODEL_DIR}"
+  if [[ -n "${PYTORCH_WEIGHT_PATH_OVERRIDE}" ]]; then
+    SINGLE_STAGE_WEIGHT_PATH="${PYTORCH_WEIGHT_PATH_OVERRIDE}"
+  fi
+
   build_train_args TRAIN_ARGS \
     "${EXP_NAME}" \
     "${NUM_TRAIN_STEPS}" \
-    "${BASE_MODEL_DIR}" \
+    "${SINGLE_STAGE_WEIGHT_PATH}" \
     "${WANDB_ENABLED}" \
     "${RESUME}" \
     "" \

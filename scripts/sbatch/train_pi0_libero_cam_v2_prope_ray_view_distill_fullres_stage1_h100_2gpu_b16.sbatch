@@ -1,15 +1,15 @@
 #!/bin/bash
-#SBATCH --job-name=pi0_cam_v3_fr_s2_fgfg_r
+#SBATCH --job-name=pi0_cam_v2_s1_h100
 #SBATCH --output=/scratch/yp2841/geometry-vla/openpi_cam/log/pi0_libero_object_ft/slurm-%j.out
 #SBATCH --error=/scratch/yp2841/geometry-vla/openpi_cam/log/pi0_libero_object_ft/slurm-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=256G
-#SBATCH --time=08:00:00
+#SBATCH --time=06:00:00
 #SBATCH --account=torch_pr_637_tandon_advanced
-#SBATCH --partition=h100_tandon,h200_tandon,a100_tandon
-#SBATCH --gres=gpu:4
+#SBATCH --partition=h100_tandon
+#SBATCH --gres=gpu:2
 #SBATCH --export=ALL
 
 set -euo pipefail
@@ -49,25 +49,24 @@ if [[ -z "${REPO_ROOT}" ]]; then
   exit 1
 fi
 
+export HF_LEROBOT_HOME="${HF_LEROBOT_HOME:-/scratch/yp2841/cache/lerobot}"
 export USE_CAM=true
-export RESUME=true
-export CONFIG_NAME=pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage2_fgfg
+export CONFIG_NAME=pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage1
 export TRAIN_RECIPE=single_stage
 export WANDB_ENABLED=true
 export WANDB_PROJECT=pi0_libero_cam
 export WANDB_ENTITY=NYU-robotics
 export WANDB_API_KEY_OVERRIDE="${WANDB_API_KEY_OVERRIDE:?Set WANDB_API_KEY_OVERRIDE}"
-export HF_LEROBOT_HOME=/scratch/yp2841/.huggingface/lerobot
-export NUM_GPUS=4
+export NUM_GPUS=2
 export NUM_WORKERS=16
-export BATCH_SIZE=32
-export NUM_TRAIN_STEPS=30000
+export BATCH_SIZE=16
+export NUM_TRAIN_STEPS=5000
 export SAVE_INTERVAL=1000
 export KEEP_PERIOD=5000
 
-export DATASET_REPO_ID=glbreeze/libero_object_cam_v3
-export NORM_ASSET_ID=glbreeze/libero_object_cam_v3
-export EXP_NAME=pi0_libero_object_cam_v3_prope_ray_view_distill_fullres_twostage_v1_stage2_fgfg
-export PYTORCH_WEIGHT_PATH_OVERRIDE="${REPO_ROOT}/checkpoints/pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage1_fgfg_pi3xray/pi0_libero_object_cam_v3_prope_ray_view_distill_fullres_twostage_v1_stage1_fgfg_pi3xray_l40s/5000"
+export DATASET_REPO_ID=glbreeze/libero_cam_v2
+export NORM_ASSET_ID=glbreeze/libero_cam_v2
+export PI3X_TARGETS_ROOT_OVERRIDE=/scratch/yp2841/geometry-vla/.cache/openpi/pi3x_targets_224/libero_cam_v2
+export EXP_NAME=pi0_libero_cam_v2_prope_ray_view_distill_fullres_twostage_v1_stage1_h100_2gpu_b16
 
 exec bash "${REPO_ROOT}/scripts/sbatch/train_pi0_libero_object_ft.sbatch"
