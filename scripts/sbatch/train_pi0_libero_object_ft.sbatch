@@ -74,6 +74,7 @@ CROSS_VIEW_TYPE=${CROSS_VIEW_TYPE:-}
 TRAIN_RECIPE=${TRAIN_RECIPE:-auto}
 PYTORCH_WEIGHT_PATH_OVERRIDE=${PYTORCH_WEIGHT_PATH_OVERRIDE:-}
 PI3X_TARGETS_ROOT_OVERRIDE=${PI3X_TARGETS_ROOT_OVERRIDE:-}
+GT_POINT_TARGETS_ROOT_OVERRIDE=${GT_POINT_TARGETS_ROOT_OVERRIDE:-}
 SIMPLE_STAGE1_STEPS=${SIMPLE_STAGE1_STEPS:-5000}
 SIMPLE_STAGE2_STEPS=${SIMPLE_STAGE2_STEPS:-55000}
 SIMPLE_STAGE1_WARMUP_STEPS=${SIMPLE_STAGE1_WARMUP_STEPS:-500}
@@ -178,6 +179,7 @@ link_openpi_cache_dir() {
 
 link_openpi_cache_dir "pi3x_targets"
 link_openpi_cache_dir "pi3x_targets_224"
+link_openpi_cache_dir "gt_point_targets_224"
 
 if [[ "${NUM_GPUS}" -lt 1 ]]; then
   echo "NUM_GPUS must be >= 1, got ${NUM_GPUS}" >&2
@@ -272,6 +274,12 @@ build_train_args() {
   if [[ -n "${PI3X_TARGETS_ROOT_OVERRIDE}" ]]; then
     out_args+=(
       --data.pi3x_targets_root "${PI3X_TARGETS_ROOT_OVERRIDE}"
+    )
+  fi
+
+  if [[ -n "${GT_POINT_TARGETS_ROOT_OVERRIDE}" ]]; then
+    out_args+=(
+      --data.gt_point_targets_root "${GT_POINT_TARGETS_ROOT_OVERRIDE}"
     )
   fi
 
@@ -441,6 +449,7 @@ echo "save_interval: ${SAVE_INTERVAL}"
 echo "keep_period: ${KEEP_PERIOD}"
 echo "pytorch_weight_path_override: ${PYTORCH_WEIGHT_PATH_OVERRIDE:-<none>}"
 echo "pi3x_targets_root_override: ${PI3X_TARGETS_ROOT_OVERRIDE:-<none>}"
+echo "gt_point_targets_root_override: ${GT_POINT_TARGETS_ROOT_OVERRIDE:-<none>}"
 which python
 python -V
 hostname

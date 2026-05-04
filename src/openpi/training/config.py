@@ -343,6 +343,11 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
     # point head can be supervised with cached patch-resolution Pi3X targets at
     # `{root}/{cam}/episode_NNNNNN.npz`.
     pi3x_targets_root: str | None = None
+    # Optional simulator-GT point target cache. When set together with
+    # `pi3x_targets_root`, use a deterministic per-sample mix of GT and Pi3X.
+    gt_point_targets_root: str | None = None
+    point_target_gt_ratio: float = 0.5
+    point_target_mix_seed: int = 0
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -371,15 +376,33 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
                     "observation/wrist_intrinsic": "wrist_intrinsic",
                 }
             )
-        if self.pi3x_targets_root is not None:
+        if self.pi3x_targets_root is not None or self.gt_point_targets_root is not None:
             # Carry LeRobot row indices through the repack so Pi3xLiberoTargetLoader
             # can look up cached teacher targets per (episode, frame).
             repack_structure["episode_index"] = "episode_index"
             repack_structure["frame_index"] = "frame_index"
 
         repack_inputs = [_transforms.RepackTransform(repack_structure)]
-        if self.pi3x_targets_root is not None:
+        if self.pi3x_targets_root is not None and self.gt_point_targets_root is not None:
+            repack_inputs.append(
+                libero_policy.MixedPointTargetLoader(
+                    pi3x_root=self.pi3x_targets_root,
+                    gt_root=self.gt_point_targets_root,
+                    gt_ratio=self.point_target_gt_ratio,
+                    seed=self.point_target_mix_seed,
+                )
+            )
+        elif self.pi3x_targets_root is not None:
             repack_inputs.append(libero_policy.Pi3xLiberoTargetLoader(root=self.pi3x_targets_root))
+        elif self.gt_point_targets_root is not None:
+            repack_inputs.append(
+                libero_policy.MixedPointTargetLoader(
+                    pi3x_root=self.gt_point_targets_root,
+                    gt_root=self.gt_point_targets_root,
+                    gt_ratio=1.0,
+                    seed=self.point_target_mix_seed,
+                )
+            )
         repack_transform = _transforms.Group(inputs=repack_inputs)
 
         # The data transforms are applied to the data coming from the dataset *and* during inference.
@@ -1043,6 +1066,63 @@ _CONFIGS = [
             "aux_point_head",
         ),
     ),
+    # Stage 1 mixed-target variant: same fgfg + Pi3X ray-init architecture, but
+    # the auxiliary point target is selected per sample from 50% simulator-GT
+    # cache and 50% Pi3X cache.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage1_gtmix",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fgfg",
+                prope_layer_idx=(0, 1),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=0.1,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=1.0,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=str(
+                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
+            ),
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_v3",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_v3",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=str(
+                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+            ),
+            gt_point_targets_root=str(
+                pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3").expanduser()
+            ),
+            point_target_gt_ratio=0.5,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=5_000,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+        trainable_prefixes=(
+            "cross_view_fusion",
+            "ray_embed",
+            "aux_point_head",
+        ),
+    ),
     TrainConfig(
         name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage2",
         model=pi0_config.Pi0Config(
@@ -1125,6 +1205,51 @@ _CONFIGS = [
         ),
         # As with the base stage2 recipe, override --pytorch_weight_path with the
         # actual Stage 1 checkpoint at launch time.
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    # Stage 2 counterpart for the 50/50 simulator-GT + Pi3X mixed target recipe.
+    # Override --pytorch_weight_path with the final Stage 1 gtmix checkpoint.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage2_gtmix",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fgfg",
+                prope_layer_idx=(0, 1),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=0.05,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=str(
+                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
+            ),
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_v3",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_v3",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=str(
+                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+            ),
+            gt_point_targets_root=str(
+                pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3").expanduser()
+            ),
+            point_target_gt_ratio=0.5,
+        ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
     ),

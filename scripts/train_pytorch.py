@@ -799,6 +799,8 @@ def train_loop(config: _config.TrainConfig):
                     "aux_loss",
                     "aux_xy_loss",
                     "aux_z_loss",
+                    "aux_gt_frac",
+                    "aux_pi3x_frac",
                 )
                 avg_extra_metrics = {}
                 for key in extra_metric_keys:

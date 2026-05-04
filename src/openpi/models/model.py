@@ -107,6 +107,12 @@ class Observation(Generic[ArrayT]):
     pi3x_target_xy: at.Float[ArrayT, "*b v ph pw 2"] | None = None
     pi3x_target_logz: at.Float[ArrayT, "*b v ph pw 1"] | None = None
     pi3x_target_conf: at.Float[ArrayT, "*b v ph pw 1"] | None = None
+    # Generic point-map targets used by mixed simulator-GT/Pi3X distillation.
+    # `point_target_source` is 1 for simulator GT and 0 for Pi3X.
+    point_target_xy: at.Float[ArrayT, "*b v ph pw 2"] | None = None
+    point_target_logz: at.Float[ArrayT, "*b v ph pw 1"] | None = None
+    point_target_conf: at.Float[ArrayT, "*b v ph pw 1"] | None = None
+    point_target_source: at.Float[ArrayT, "*b"] | None = None
 
     # Tokenized prompt.
     tokenized_prompt: at.Int[ArrayT, "*b l"] | None = None
@@ -143,6 +149,10 @@ class Observation(Generic[ArrayT]):
             pi3x_target_xy=data.get("pi3x_target_xy"),
             pi3x_target_logz=data.get("pi3x_target_logz"),
             pi3x_target_conf=data.get("pi3x_target_conf"),
+            point_target_xy=data.get("point_target_xy"),
+            point_target_logz=data.get("point_target_logz"),
+            point_target_conf=data.get("point_target_conf"),
+            point_target_source=data.get("point_target_source"),
             tokenized_prompt=data.get("tokenized_prompt"),
             tokenized_prompt_mask=data.get("tokenized_prompt_mask"),
             token_ar_mask=data.get("token_ar_mask"),
@@ -233,6 +243,10 @@ def preprocess_observation(
         pi3x_target_xy=observation.pi3x_target_xy,
         pi3x_target_logz=observation.pi3x_target_logz,
         pi3x_target_conf=observation.pi3x_target_conf,
+        point_target_xy=observation.point_target_xy,
+        point_target_logz=observation.point_target_logz,
+        point_target_conf=observation.point_target_conf,
+        point_target_source=observation.point_target_source,
         tokenized_prompt=observation.tokenized_prompt,
         tokenized_prompt_mask=observation.tokenized_prompt_mask,
         token_ar_mask=observation.token_ar_mask,

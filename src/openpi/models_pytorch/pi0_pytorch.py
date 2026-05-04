@@ -540,14 +540,21 @@ class PI0Pytorch(nn.Module):
         aux_loss = torch.zeros((), dtype=loss.dtype, device=loss.device)
         aux_xy_loss = torch.zeros((), dtype=loss.dtype, device=loss.device)
         aux_z_loss = torch.zeros((), dtype=loss.dtype, device=loss.device)
+        aux_gt_frac = torch.zeros((), dtype=loss.dtype, device=loss.device)
+        aux_pi3x_frac = torch.zeros((), dtype=loss.dtype, device=loss.device)
 
         aux_pred = self.auxiliary_head(fused_tokens)
         if "point" in aux_pred:
             xy_pred, z_pred = aux_pred["point"]  # (B, V, P, 2), (B, V, P, 1)
             w = self.config.aux_point_head.loss_weight
-            xy_tgt = getattr(observation, "pi3x_target_xy", None)
-            logz_tgt = getattr(observation, "pi3x_target_logz", None)
-            conf_tgt = getattr(observation, "pi3x_target_conf", None)
+            xy_tgt = getattr(observation, "point_target_xy", None)
+            logz_tgt = getattr(observation, "point_target_logz", None)
+            conf_tgt = getattr(observation, "point_target_conf", None)
+            target_source = getattr(observation, "point_target_source", None)
+            if xy_tgt is None or logz_tgt is None or conf_tgt is None:
+                xy_tgt = getattr(observation, "pi3x_target_xy", None)
+                logz_tgt = getattr(observation, "pi3x_target_logz", None)
+                conf_tgt = getattr(observation, "pi3x_target_conf", None)
 
             if xy_tgt is None or logz_tgt is None or conf_tgt is None:
                 # No teacher targets in this batch — keep the head in the autograd graph
@@ -577,6 +584,10 @@ class PI0Pytorch(nn.Module):
                 aux_loss = w * (aux_xy_loss + aux_z_loss)
 
                 loss = loss + aux_loss
+                if target_source is not None:
+                    source = target_source.to(dtype=loss.dtype, device=loss.device).flatten()
+                    aux_gt_frac = source.mean()
+                    aux_pi3x_frac = 1.0 - aux_gt_frac
 
         self.last_loss_breakdown = {
             "action_loss_raw": float(action_loss_raw.mean().detach()),
@@ -584,6 +595,8 @@ class PI0Pytorch(nn.Module):
             "aux_loss": float(aux_loss.detach()),
             "aux_xy_loss": float(aux_xy_loss.detach()),
             "aux_z_loss": float(aux_z_loss.detach()),
+            "aux_gt_frac": float(aux_gt_frac.detach()),
+            "aux_pi3x_frac": float(aux_pi3x_frac.detach()),
         }
 
         return loss

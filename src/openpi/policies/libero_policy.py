@@ -1,4 +1,5 @@
 import dataclasses
+import hashlib
 import logging
 import pathlib
 
@@ -30,7 +31,7 @@ def _parse_image(image) -> np.ndarray:
     return image
 
 
-def _adjust_K_for_openpi_image_flip(K) -> np.ndarray:
+def _adjust_K_for_openpi_image_flip(K) -> np.ndarray:  # noqa: N802
     """Absorb openpi's `_preprocess_image` `[::-1, ::-1]` flip into K.
 
     openpi flips the LIBERO image on both axes before feeding it to the model:
@@ -136,8 +137,16 @@ class LiberoInputs(transforms.DataTransformFn):
         if "observation/wrist_intrinsic" in data:
             inputs["wrist_intrinsic"] = _adjust_K_for_openpi_image_flip(data["observation/wrist_intrinsic"])
 
-        # ---- Pi3X distillation targets, when cached upstream by Pi3xLiberoTargetLoader ----
-        for key in ("pi3x_target_xy", "pi3x_target_logz", "pi3x_target_conf"):
+        # ---- Geometry distillation targets, when cached upstream by target loaders ----
+        for key in (
+            "pi3x_target_xy",
+            "pi3x_target_logz",
+            "pi3x_target_conf",
+            "point_target_xy",
+            "point_target_logz",
+            "point_target_conf",
+            "point_target_source",
+        ):
             if key in data:
                 inputs[key] = data[key]
 
@@ -180,18 +189,86 @@ class Pi3xLiberoTargetLoader(transforms.DataTransformFn):
         episode_index = int(np.asarray(data["episode_index"]).item())
         frame_index = int(np.asarray(data["frame_index"]).item())
 
-        root = pathlib.Path(self.root).expanduser()
-        xy_views, logz_views, conf_views = [], [], []
-        for _, subdir in self.cam_to_npz_subdir:
-            npz_path = root / subdir / f"episode_{episode_index:06d}.npz"
-            with np.load(npz_path, mmap_mode="r") as f:
-                xy_views.append(np.asarray(f["xy"][frame_index], dtype=np.float32))
-                logz_views.append(np.asarray(f["log_z"][frame_index], dtype=np.float32))
-                conf_views.append(np.asarray(f["conf"][frame_index], dtype=np.float32))
+        xy, logz, conf = _load_point_target_views(
+            self.root,
+            episode_index,
+            frame_index,
+            self.cam_to_npz_subdir,
+        )
 
-        data["pi3x_target_xy"] = np.stack(xy_views, axis=0)  # (V, 16, 16, 2)
-        data["pi3x_target_logz"] = np.stack(logz_views, axis=0)  # (V, 16, 16, 1)
-        data["pi3x_target_conf"] = np.stack(conf_views, axis=0)  # (V, 16, 16, 1)
+        data["pi3x_target_xy"] = xy
+        data["pi3x_target_logz"] = logz
+        data["pi3x_target_conf"] = conf
+        return data
+
+
+def _load_point_target_views(
+    root: str,
+    episode_index: int,
+    frame_index: int,
+    cam_to_npz_subdir: tuple[tuple[str, str], ...],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load one frame of stacked point targets from a Pi3X- or GT-style cache."""
+    root_path = pathlib.Path(root).expanduser()
+    xy_views, logz_views, conf_views = [], [], []
+    for _, subdir in cam_to_npz_subdir:
+        npz_path = root_path / subdir / f"episode_{episode_index:06d}.npz"
+        with np.load(npz_path, mmap_mode="r") as f:
+            xy_views.append(np.asarray(f["xy"][frame_index], dtype=np.float32))
+            logz_views.append(np.asarray(f["log_z"][frame_index], dtype=np.float32))
+            conf_views.append(np.asarray(f["conf"][frame_index], dtype=np.float32))
+
+    return (
+        np.stack(xy_views, axis=0),  # (V, H, W, 2)
+        np.stack(logz_views, axis=0),  # (V, H, W, 1)
+        np.stack(conf_views, axis=0),  # (V, H, W, 1)
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class MixedPointTargetLoader(transforms.DataTransformFn):
+    """Inject a deterministic per-sample mix of simulator-GT and Pi3X point targets.
+
+    `gt_ratio=0.5` means each (episode_index, frame_index) independently selects
+    GT with 50% probability and Pi3X otherwise. The hash-based selection is stable
+    across dataloader workers, DDP ranks, and resumed runs.
+    """
+
+    pi3x_root: str
+    gt_root: str
+    gt_ratio: float = 0.5
+    seed: int = 0
+    cam_to_npz_subdir: tuple[tuple[str, str], ...] = (
+        ("base", "agent"),
+        ("left_wrist", "wrist"),
+    )
+
+    def __post_init__(self):
+        if not 0.0 <= self.gt_ratio <= 1.0:
+            raise ValueError(f"gt_ratio must be in [0, 1], got {self.gt_ratio}")
+
+    def _use_gt(self, episode_index: int, frame_index: int) -> bool:
+        key = f"{self.seed}:{episode_index}:{frame_index}".encode()
+        value = int.from_bytes(hashlib.blake2b(key, digest_size=8).digest(), "little")
+        return (value / float(1 << 64)) < self.gt_ratio
+
+    def __call__(self, data: dict) -> dict:
+        episode_index = int(np.asarray(data["episode_index"]).item())
+        frame_index = int(np.asarray(data["frame_index"]).item())
+        source = 1 if self._use_gt(episode_index, frame_index) else 0
+        root = self.gt_root if source else self.pi3x_root
+
+        xy, logz, conf = _load_point_target_views(
+            root,
+            episode_index,
+            frame_index,
+            self.cam_to_npz_subdir,
+        )
+        data["point_target_xy"] = xy
+        data["point_target_logz"] = logz
+        data["point_target_conf"] = conf
+        # 1 == simulator GT, 0 == Pi3X. Kept as float for simple batching/logging.
+        data["point_target_source"] = np.asarray(source, dtype=np.float32)
         return data
 
 
