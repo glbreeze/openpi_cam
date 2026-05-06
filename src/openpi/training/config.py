@@ -1105,7 +1105,7 @@ _CONFIGS = [
                 pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
             ),
             gt_point_targets_root=str(
-                pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3").expanduser()
+                pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3_aligned").expanduser()
             ),
             point_target_gt_ratio=0.5,
         ),
@@ -1246,7 +1246,7 @@ _CONFIGS = [
                 pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
             ),
             gt_point_targets_root=str(
-                pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3").expanduser()
+                pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3_aligned").expanduser()
             ),
             point_target_gt_ratio=0.5,
         ),
