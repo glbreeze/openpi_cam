@@ -60,7 +60,8 @@ PI3X_REPO="${PI3X_REPO:-${GEO_ROOT}/Pi3X_Libero}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${OPENPI_CACHE_DIR}/pi3x_targets_224/libero_object_cam_v3}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 OUTPUT_RESOLUTION="${OUTPUT_RESOLUTION:-224}"
-LINK_PATH="${LINK_PATH:-${HOME}/.cache/openpi/pi3x_targets_224/libero_object_cam_v3}"
+LOG_Z_MODE="${LOG_Z_MODE:-raw}"
+LINK_PATH="${LINK_PATH:-}"
 
 mkdir -p \
   "${HF_HOME}" \
@@ -68,8 +69,11 @@ mkdir -p \
   "${HF_DATASETS_CACHE}" \
   "${OPENPI_CACHE_DIR}" \
   "${XDG_CACHE_HOME}" \
-  "$(dirname -- "${OUTPUT_ROOT}")" \
-  "$(dirname -- "${LINK_PATH}")"
+  "$(dirname -- "${OUTPUT_ROOT}")"
+
+if [[ -n "${LINK_PATH}" ]]; then
+  mkdir -p "$(dirname -- "${LINK_PATH}")"
+fi
 
 if [[ ! -d "${DATA_ROOT}/data" || ! -f "${DATA_ROOT}/meta/info.json" ]]; then
   echo "Missing LeRobot dataset under ${DATA_ROOT}" >&2
@@ -97,6 +101,7 @@ echo "output root: ${OUTPUT_ROOT}"
 echo "link path: ${LINK_PATH}"
 echo "batch size: ${BATCH_SIZE}"
 echo "output resolution: ${OUTPUT_RESOLUTION}"
+echo "log z mode: ${LOG_Z_MODE}"
 hostname
 python -V
 
@@ -112,7 +117,12 @@ python scripts/cache_pi3x_targets.py \
   --output-root "${OUTPUT_ROOT}" \
   --pi3x-repo "${PI3X_REPO}" \
   --output-resolution "${OUTPUT_RESOLUTION}" \
-  --batch-size "${BATCH_SIZE}"
+  --batch-size "${BATCH_SIZE}" \
+  --log-z-mode "${LOG_Z_MODE}"
 
-ln -sfn "${OUTPUT_ROOT}" "${LINK_PATH}"
-echo "Symlinked ${LINK_PATH} -> ${OUTPUT_ROOT}"
+if [[ -n "${LINK_PATH}" ]]; then
+  ln -sfn "${OUTPUT_ROOT}" "${LINK_PATH}"
+  echo "Symlinked ${LINK_PATH} -> ${OUTPUT_ROOT}"
+else
+  echo "No LINK_PATH requested; cache written at ${OUTPUT_ROOT}"
+fi

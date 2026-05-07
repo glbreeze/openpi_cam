@@ -5,7 +5,9 @@ runs the Pi3X teacher and dumps per-frame patch-level targets that the openpi
 `AuxPointHead` consumes:
 
     xy     : (T, 16, 16, 2)  — pre-z-multiplication direction (matches PointHead output)
-    log_z  : (T, 16, 16, 1)  — log depth (matches PointHead output, pre-exp)
+    log_z  : (T, 16, 16, 1)  — log depth. By default this is the raw PointHead
+             output; with `--log-z-mode metric`, it includes Pi3X's global
+             metric scale as `raw_log_z + log(metric)`.
     conf   : (T, 16, 16, 1)  — conf logits (pre-sigmoid)
 
 To keep teacher patch features pixel-aligned with openpi's SigLIP grid, the cache
@@ -86,7 +88,7 @@ def _prep_images(uint8_imgs: np.ndarray, target_hw: int) -> torch.Tensor:
 
 @torch.no_grad()
 def teacher_patch_forward(
-    model, imgs: torch.Tensor, K: torch.Tensor, output_resolution: int = 16
+    model, imgs: torch.Tensor, K: torch.Tensor, output_resolution: int = 16, log_z_mode: str = "raw"
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Run Pi3X (single-view) and return xy / log_z / conf at the requested resolution.
 
@@ -98,7 +100,7 @@ def teacher_patch_forward(
 
     Returns:
         xy   : (B, R, R, 2)  raw xy direction (matches Pi3X point_head output before exp)
-        logz : (B, R, R, 1)  raw log-z
+        logz : (B, R, R, 1)  raw log-z or metric-scaled log-z
         conf : (B, R, R, 1)  conf logits (pre-sigmoid)
         where R = output_resolution.
     """
@@ -125,6 +127,20 @@ def teacher_patch_forward(
     point_feat = ret_point[:, model.patch_start_idx :].float()
     with torch.amp.autocast(device_type="cuda", enabled=False):
         xy_full, log_z_full = model._chunked_conv_head(model.point_head, point_feat, patch_h, patch_w)
+
+    if log_z_mode == "metric":
+        pos_hw = pos.reshape(B, patch_h * patch_w + model.patch_start_idx, -1)
+        ret_metric = model.metric_decoder(
+            model.metric_token.repeat(B, 1, 1),
+            hidden.reshape(B, patch_h * patch_w + model.patch_start_idx, -1),
+            xpos=pos_hw[:, 0:1],
+            ypos=pos_hw,
+        )
+        with torch.amp.autocast(device_type="cuda", enabled=False):
+            log_metric = model.metric_head(ret_metric.float()).reshape(B)
+        log_z_full = log_z_full + log_metric[:, None, None, None]
+    elif log_z_mode != "raw":
+        raise ValueError(f"log_z_mode must be 'raw' or 'metric', got {log_z_mode!r}.")
 
     ret_conf = model.conf_decoder(hidden, xpos=pos)
     conf_feat = ret_conf[:, model.patch_start_idx :].float()
@@ -161,6 +177,7 @@ def _process_episode(
     batch_size: int,
     autocast_dtype: torch.dtype | None,
     output_resolution: int = 16,
+    log_z_mode: str = "raw",
 ):
     columns = ["image", "wrist_image", "agent_intrinsic", "wrist_intrinsic"]
     table = pq.read_table(parquet_path, columns=columns)
@@ -207,7 +224,13 @@ def _process_episode(
                 else _nullcontext()
             )
             with ctx:
-                xy_p, logz_p, conf_p = teacher_patch_forward(model, imgs, K_chunk, output_resolution=R)
+                xy_p, logz_p, conf_p = teacher_patch_forward(
+                    model,
+                    imgs,
+                    K_chunk,
+                    output_resolution=R,
+                    log_z_mode=log_z_mode,
+                )
 
             xy_buf[start:end] = xy_p.float().cpu().numpy().astype(np.float16)
             logz_buf[start:end] = logz_p.float().cpu().numpy().astype(np.float16)
@@ -292,6 +315,14 @@ def main():
         "224 = full Pi3X output (~400 KB/frame, ~196x more disk).",
     )
     parser.add_argument(
+        "--log-z-mode",
+        type=str,
+        default="raw",
+        choices=["raw", "metric"],
+        help="Which Pi3X log_z target to cache. 'raw' preserves the historical point_head output; "
+        "'metric' adds Pi3X's global metric_head scale: raw_log_z + log(metric).",
+    )
+    parser.add_argument(
         "--episode-range",
         type=str,
         default=None,
@@ -342,6 +373,7 @@ def main():
         return
 
     logger.info("Building Pi3X (device=%s, autocast=%s)", device, autocast_dtype)
+    logger.info("Caching log_z_mode=%s", args.log_z_mode)
     model = _build_pi3x(args.pi3x_repo, args.ckpt, device)
 
     args.output_root.mkdir(parents=True, exist_ok=True)
@@ -360,6 +392,7 @@ def main():
             batch_size=args.batch_size,
             autocast_dtype=autocast_dtype,
             output_resolution=args.output_resolution,
+            log_z_mode=args.log_z_mode,
         )
         if (i + 1) % 10 == 0 or (i + 1) == len(parquet_paths):
             elapsed = time.time() - t0
