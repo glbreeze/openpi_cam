@@ -20,6 +20,14 @@ class AuxPointHeadConfig:
     qk_norm: bool = True
     init_values: float = 0.01
     loss_weight: float = 1.0  # scalar weight on the point distillation loss.
+    # Pi3X-style scale-invariant local pointmap supervision: exp(log_z),
+    # build local points (xy * z, z), align one scale per sample, then supervise rays
+    # and aligned depth.
+    ray_loss_weight: float = 1.0
+    depth_loss_weight: float = 1.0
+    depth_weight_min_frac: float = 0.1
+    # Pi3X aligns scale on a fixed-size sampled point set. <= 0 uses all points.
+    scale_align_num_points: int = 4096
     # 16 -> patch-level prediction (matches the avg-pooled cache; cheap).
     # 224 -> Pi3X-matched full-resolution prediction with a ConvHead-style upsampler
     # (heavier; pair with `cache_pi3x_targets.py --output-resolution 224`).

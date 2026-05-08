@@ -108,7 +108,8 @@ class Observation(Generic[ArrayT]):
     pi3x_target_logz: at.Float[ArrayT, "*b v ph pw 1"] | None = None
     pi3x_target_conf: at.Float[ArrayT, "*b v ph pw 1"] | None = None
     # Generic point-map targets used by mixed simulator-GT/Pi3X distillation.
-    # `point_target_source` is 1 for simulator GT and 0 for Pi3X.
+    # `point_target_source` is the GT fraction: 1 for GT, 0 for Pi3X, or alpha
+    # for dual-loss GT branch weighting.
     point_target_xy: at.Float[ArrayT, "*b v ph pw 2"] | None = None
     point_target_logz: at.Float[ArrayT, "*b v ph pw 1"] | None = None
     point_target_conf: at.Float[ArrayT, "*b v ph pw 1"] | None = None

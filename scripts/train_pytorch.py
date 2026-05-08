@@ -797,8 +797,11 @@ def train_loop(config: _config.TrainConfig):
                     "action_loss",
                     "action_loss_raw",
                     "aux_loss",
+                    "aux_gt_loss",
+                    "aux_pi3x_loss",
                     "aux_xy_loss",
                     "aux_z_loss",
+                    "aux_scale_mean",
                     "aux_gt_frac",
                     "aux_pi3x_frac",
                 )

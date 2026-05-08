@@ -56,3 +56,22 @@ def test_mixed_point_target_loader_ratio_extremes(tmp_path):
     assert float(gt_out["point_target_source"]) == 1.0
     assert np.allclose(pi3x_out["point_target_xy"], 1.0)
     assert np.allclose(gt_out["point_target_xy"], 9.0)
+
+
+def test_dual_point_target_loader_keeps_targets_separate(tmp_path):
+    pi3x_root = tmp_path / "pi3x"
+    gt_root = tmp_path / "gt"
+    _write_target(pi3x_root, episode_index=2, value=3.0)
+    _write_target(gt_root, episode_index=2, value=11.0)
+    data = {"episode_index": np.asarray(2), "frame_index": np.asarray(0)}
+
+    loader = libero_policy.DualPointTargetLoader(str(pi3x_root), str(gt_root), gt_weight=0.6)
+    out = loader(dict(data))
+
+    assert np.isclose(float(out["point_target_source"]), 0.6)
+    assert np.allclose(out["point_target_xy"], 11.0)
+    assert np.allclose(out["point_target_logz"], 12.0)
+    assert np.allclose(out["point_target_conf"], 13.0)
+    assert np.allclose(out["pi3x_target_xy"], 3.0)
+    assert np.allclose(out["pi3x_target_logz"], 4.0)
+    assert np.allclose(out["pi3x_target_conf"], 5.0)

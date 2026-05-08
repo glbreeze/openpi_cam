@@ -51,6 +51,152 @@ def sample_beta(alpha, beta, bsize, device):
     return dist.sample((bsize,))
 
 
+def _local_points_from_xy_logz(xy: Tensor, logz: Tensor) -> tuple[Tensor, Tensor]:
+    logz = torch.nan_to_num(logz, nan=0.0, posinf=15.0, neginf=-30.0)
+    depth = torch.exp(logz.clamp(max=15.0))
+    return torch.cat([xy * depth, depth], dim=-1), depth
+
+
+def _weighted_mean(
+    values: Tensor,
+    weights: Tensor,
+    dim: tuple[int, ...],
+    *,
+    keepdim: bool,
+    eps: float = 1e-6,
+) -> Tensor:
+    denom = weights.sum(dim=dim, keepdim=keepdim).clamp_min(eps)
+    return (values * weights).sum(dim=dim, keepdim=keepdim) / denom
+
+
+def _subsample_alignment_inputs(
+    pred_points: Tensor,
+    target_points: Tensor,
+    weights: Tensor,
+    max_points: int,
+) -> tuple[Tensor, Tensor, Tensor]:
+    if max_points <= 0 or pred_points.shape[1] <= max_points:
+        return pred_points, target_points, weights
+
+    pred_out, target_out, weight_out = [], [], []
+    for pred_i, target_i, weight_i in zip(pred_points, target_points, weights, strict=True):
+        valid_idx = torch.nonzero(weight_i > 0, as_tuple=False).flatten()
+        if valid_idx.numel() == 0:
+            idx = torch.zeros(max_points, dtype=torch.long, device=weights.device)
+            pred_out.append(pred_i[idx])
+            target_out.append(target_i[idx])
+            weight_out.append(torch.zeros(max_points, dtype=weight_i.dtype, device=weight_i.device))
+            continue
+
+        sample_idx = torch.div(
+            torch.arange(max_points, device=weights.device) * valid_idx.numel(),
+            max_points,
+            rounding_mode="floor",
+        ).clamp_max(valid_idx.numel() - 1)
+        idx = valid_idx[sample_idx]
+        pred_out.append(pred_i[idx])
+        target_out.append(target_i[idx])
+        weight_out.append(weight_i[idx])
+
+    return torch.stack(pred_out, dim=0), torch.stack(target_out, dim=0), torch.stack(weight_out, dim=0)
+
+
+@torch.no_grad()
+def _align_points_scale_l1(pred_points: Tensor, target_points: Tensor, weights: Tensor, max_points: int) -> Tensor:
+    """Pi3X-style positive scalar alignment for local pointmaps.
+
+    Solves the same weighted L1 scale problem as Pi3X's `align_points_scale`, but
+    on an optional deterministic subsample to keep full-resolution training cheap.
+    """
+
+    bsz = pred_points.shape[0]
+    pred_points = pred_points.reshape(bsz, -1, 3)
+    target_points = target_points.reshape(bsz, -1, 3)
+    weights = weights.reshape(bsz, -1)
+    pred_points, target_points, weights = _subsample_alignment_inputs(
+        pred_points,
+        target_points,
+        weights,
+        max_points,
+    )
+
+    x = pred_points.flatten(1)
+    y = target_points.flatten(1)
+    w = weights[..., None].expand_as(pred_points).flatten(1)
+    finite = torch.isfinite(x) & torch.isfinite(y) & torch.isfinite(w) & (w > 0)
+    w = torch.where(finite, w, torch.zeros_like(w))
+    x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+    y = torch.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+
+    eps = 1e-7
+    sign = torch.sign(x)
+    x = x * sign
+    y = y * sign
+    y_div_x = y / x.clamp_min(eps)
+    y_div_x, argsort = y_div_x.sort(dim=-1)
+
+    wx = torch.gather(x * w, dim=-1, index=argsort)
+    derivatives = 2 * wx.cumsum(dim=-1) - wx.sum(dim=-1, keepdim=True)
+    search = torch.searchsorted(
+        derivatives,
+        torch.zeros_like(derivatives[..., :1]),
+        side="left",
+    ).clamp_max(derivatives.shape[-1] - 1)
+    scale = y_div_x.gather(dim=-1, index=search).squeeze(-1)
+
+    has_weight = weights.sum(dim=-1) > eps
+    return torch.where(has_weight, scale.abs().clamp_min(eps), torch.ones_like(scale))
+
+
+def _pi3x_point_loss(
+    xy_pred: Tensor,
+    logz_pred: Tensor,
+    xy_target: Tensor,
+    logz_target: Tensor,
+    conf_weights: Tensor,
+    view_mask: Tensor,
+    *,
+    scale_align_num_points: int,
+    depth_weight_min_frac: float,
+    ray_loss_weight: float,
+    depth_loss_weight: float,
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    finite_target = torch.isfinite(xy_target).all(dim=-1, keepdim=True) & torch.isfinite(logz_target)
+    xy_target = torch.nan_to_num(xy_target, nan=0.0, posinf=0.0, neginf=0.0)
+    xy_pred = torch.nan_to_num(xy_pred, nan=0.0, posinf=0.0, neginf=0.0)
+
+    pred_points, _ = _local_points_from_xy_logz(xy_pred, logz_pred)
+    target_points, target_depth = _local_points_from_xy_logz(xy_target, logz_target)
+
+    conf_weights = torch.where(finite_target, conf_weights, torch.zeros_like(conf_weights))
+    valid_weights = (conf_weights > 0.5).to(dtype=xy_pred.dtype)
+
+    ray_weights = view_mask[:, :, None, None].to(dtype=xy_pred.dtype) * finite_target.to(dtype=xy_pred.dtype)
+    ray_denom = (ray_weights.sum() * xy_pred.shape[-1]).clamp_min(1.0)
+    ray_loss = (torch.abs(xy_pred - xy_target) * ray_weights).sum() / ray_denom
+
+    mean_depth = _weighted_mean(target_depth.detach(), valid_weights, dim=(2,), keepdim=True)
+    min_depth = (depth_weight_min_frac * mean_depth).clamp_min(1e-6)
+    depth_weights = 1.0 / target_depth.detach().clamp_min(min_depth).clamp_min(1e-6)
+    point_weights = valid_weights * depth_weights
+
+    scale = _align_points_scale_l1(
+        pred_points,
+        target_points,
+        point_weights.squeeze(-1),
+        max_points=scale_align_num_points,
+    )
+    aligned_pred_points = pred_points * scale.view(-1, 1, 1, 1)
+
+    depth_denom = valid_weights.sum().clamp_min(1.0)
+    depth_loss = (
+        torch.abs(aligned_pred_points[..., 2:3] - target_points[..., 2:3]) * point_weights
+    ).sum() / depth_denom
+
+    total = ray_loss_weight * ray_loss + depth_loss_weight * depth_loss
+    return total, ray_loss, depth_loss, scale
+
+
 def make_att_2d_masks(pad_masks, att_masks):
     """Copied from big_vision.
 
@@ -540,61 +686,124 @@ class PI0Pytorch(nn.Module):
         aux_loss = torch.zeros((), dtype=loss.dtype, device=loss.device)
         aux_xy_loss = torch.zeros((), dtype=loss.dtype, device=loss.device)
         aux_z_loss = torch.zeros((), dtype=loss.dtype, device=loss.device)
+        aux_scale_mean = torch.ones((), dtype=loss.dtype, device=loss.device)
         aux_gt_frac = torch.zeros((), dtype=loss.dtype, device=loss.device)
         aux_pi3x_frac = torch.zeros((), dtype=loss.dtype, device=loss.device)
+        aux_gt_loss = torch.zeros((), dtype=loss.dtype, device=loss.device)
+        aux_pi3x_loss = torch.zeros((), dtype=loss.dtype, device=loss.device)
 
         aux_pred = self.auxiliary_head(fused_tokens)
         if "point" in aux_pred:
             xy_pred, z_pred = aux_pred["point"]  # (B, V, P, 2), (B, V, P, 1)
             w = self.config.aux_point_head.loss_weight
-            xy_tgt = getattr(observation, "point_target_xy", None)
-            logz_tgt = getattr(observation, "point_target_logz", None)
-            conf_tgt = getattr(observation, "point_target_conf", None)
+            point_xy_tgt = getattr(observation, "point_target_xy", None)
+            point_logz_tgt = getattr(observation, "point_target_logz", None)
+            point_conf_tgt = getattr(observation, "point_target_conf", None)
+            pi3x_xy_tgt = getattr(observation, "pi3x_target_xy", None)
+            pi3x_logz_tgt = getattr(observation, "pi3x_target_logz", None)
+            pi3x_conf_tgt = getattr(observation, "pi3x_target_conf", None)
             target_source = getattr(observation, "point_target_source", None)
-            if xy_tgt is None or logz_tgt is None or conf_tgt is None:
-                xy_tgt = getattr(observation, "pi3x_target_xy", None)
-                logz_tgt = getattr(observation, "pi3x_target_logz", None)
-                conf_tgt = getattr(observation, "pi3x_target_conf", None)
+            has_point_target = point_xy_tgt is not None and point_logz_tgt is not None and point_conf_tgt is not None
+            has_pi3x_target = pi3x_xy_tgt is not None and pi3x_logz_tgt is not None and pi3x_conf_tgt is not None
 
-            if xy_tgt is None or logz_tgt is None or conf_tgt is None:
+            if not has_point_target and not has_pi3x_target:
                 # No teacher targets in this batch — keep the head in the autograd graph
                 # for DDP without contributing to the loss.
                 loss = loss + w * 0.0 * (xy_pred.sum() + z_pred.sum())
             else:
-                # Targets come from the loader as (B, V_t, ph, pw, C). Flatten patches and
-                # slice the prediction to the supervised view count (V_t = 2 for libero;
-                # the padded right_wrist view has no teacher target).
-                v_tgt = xy_tgt.shape[1]
-                xy_tgt_f = xy_tgt.flatten(2, 3).to(xy_pred.dtype)  # (B, V_t, P, 2)
-                logz_tgt_f = logz_tgt.flatten(2, 3).to(z_pred.dtype)  # (B, V_t, P, 1)
-                conf_tgt_f = conf_tgt.flatten(2, 3).to(xy_pred.dtype)  # (B, V_t, P, 1)
-                xy_pred_v = xy_pred[:, :v_tgt]
-                z_pred_v = z_pred[:, :v_tgt]
+                ph_cfg = self.config.aux_point_head
 
-                # Soft confidence weighting: w_pix = sigmoid(conf_tgt), matching Pi3's
-                # native distillation loss (vs. a hard sigmoid>0.1 gate). Per-view
-                # image_mask zeros out dropped views.
-                w_pix = torch.sigmoid(conf_tgt_f).to(xy_pred.dtype)  # (B, V_t, P, 1)
-                view_mask = img_masks[:, :v_tgt].to(xy_pred.dtype)  # (B, V_t)
-                w_pix = w_pix * view_mask[:, :, None, None]
+                def compute_target_loss(xy_tgt: Tensor, logz_tgt: Tensor, conf_tgt: Tensor):
+                    # Targets come from the loader as (B, V_t, ph, pw, C). Flatten
+                    # pixels/patches and slice the prediction to the supervised view
+                    # count (V_t = 2 for LIBERO; right_wrist is padded).
+                    v_tgt = xy_tgt.shape[1]
+                    xy_tgt_f = xy_tgt.flatten(2, 3).to(xy_pred.dtype)
+                    logz_tgt_f = logz_tgt.flatten(2, 3).to(z_pred.dtype)
+                    conf_tgt_f = conf_tgt.flatten(2, 3).to(xy_pred.dtype)
+                    xy_pred_v = xy_pred[:, :v_tgt]
+                    z_pred_v = z_pred[:, :v_tgt]
 
-                denom = w_pix.sum().clamp_min(1.0)
-                aux_xy_loss = ((xy_pred_v - xy_tgt_f) ** 2 * w_pix).sum() / denom / xy_pred_v.shape[-1]
-                aux_z_loss = ((z_pred_v - logz_tgt_f) ** 2 * w_pix).sum() / denom
-                aux_loss = w * (aux_xy_loss + aux_z_loss)
+                    conf_weights = torch.sigmoid(conf_tgt_f).to(xy_pred.dtype)
+                    view_mask = img_masks[:, :v_tgt].to(xy_pred.dtype)
+                    conf_weights = conf_weights * view_mask[:, :, None, None]
+
+                    return _pi3x_point_loss(
+                        xy_pred_v,
+                        z_pred_v,
+                        xy_tgt_f,
+                        logz_tgt_f,
+                        conf_weights,
+                        view_mask,
+                        scale_align_num_points=ph_cfg.scale_align_num_points,
+                        depth_weight_min_frac=ph_cfg.depth_weight_min_frac,
+                        ray_loss_weight=ph_cfg.ray_loss_weight,
+                        depth_loss_weight=ph_cfg.depth_loss_weight,
+                    )
+
+                if has_point_target and has_pi3x_target:
+                    source = (
+                        target_source.to(dtype=loss.dtype, device=loss.device).flatten()
+                        if target_source is not None
+                        else torch.full((1,), 0.5, dtype=loss.dtype, device=loss.device)
+                    )
+                    gt_weight = source.mean().clamp(0.0, 1.0)
+                    pi3x_weight = 1.0 - gt_weight
+
+                    gt_raw, gt_ray, gt_depth, gt_scale = compute_target_loss(
+                        point_xy_tgt,
+                        point_logz_tgt,
+                        point_conf_tgt,
+                    )
+                    pi3x_raw, pi3x_ray, pi3x_depth, pi3x_scale = compute_target_loss(
+                        pi3x_xy_tgt,
+                        pi3x_logz_tgt,
+                        pi3x_conf_tgt,
+                    )
+
+                    raw_aux_loss = gt_weight * gt_raw + pi3x_weight * pi3x_raw
+                    aux_xy_loss = gt_weight * gt_ray + pi3x_weight * pi3x_ray
+                    aux_z_loss = gt_weight * gt_depth + pi3x_weight * pi3x_depth
+                    aux_scale_mean = (
+                        gt_weight * gt_scale.mean() + pi3x_weight * pi3x_scale.mean()
+                    ).to(dtype=loss.dtype)
+                    aux_loss = w * raw_aux_loss
+                    aux_gt_loss = w * gt_weight * gt_raw
+                    aux_pi3x_loss = w * pi3x_weight * pi3x_raw
+                    aux_gt_frac = gt_weight
+                    aux_pi3x_frac = pi3x_weight
+                else:
+                    if has_point_target:
+                        xy_tgt, logz_tgt, conf_tgt = point_xy_tgt, point_logz_tgt, point_conf_tgt
+                    else:
+                        xy_tgt, logz_tgt, conf_tgt = pi3x_xy_tgt, pi3x_logz_tgt, pi3x_conf_tgt
+
+                    raw_aux_loss, aux_xy_loss, aux_z_loss, aux_scale = compute_target_loss(
+                        xy_tgt,
+                        logz_tgt,
+                        conf_tgt,
+                    )
+                    aux_scale_mean = aux_scale.mean().to(dtype=loss.dtype)
+                    aux_loss = w * raw_aux_loss
 
                 loss = loss + aux_loss
-                if target_source is not None:
+                if has_point_target and not has_pi3x_target and target_source is not None:
                     source = target_source.to(dtype=loss.dtype, device=loss.device).flatten()
                     aux_gt_frac = source.mean()
                     aux_pi3x_frac = 1.0 - aux_gt_frac
+                elif has_pi3x_target and not has_point_target:
+                    aux_gt_frac = torch.zeros((), dtype=loss.dtype, device=loss.device)
+                    aux_pi3x_frac = torch.ones((), dtype=loss.dtype, device=loss.device)
 
         self.last_loss_breakdown = {
             "action_loss_raw": float(action_loss_raw.mean().detach()),
             "action_loss": float(loss.mean().detach() - aux_loss.detach()),
             "aux_loss": float(aux_loss.detach()),
+            "aux_gt_loss": float(aux_gt_loss.detach()),
+            "aux_pi3x_loss": float(aux_pi3x_loss.detach()),
             "aux_xy_loss": float(aux_xy_loss.detach()),
             "aux_z_loss": float(aux_z_loss.detach()),
+            "aux_scale_mean": float(aux_scale_mean.detach()),
             "aux_gt_frac": float(aux_gt_frac.detach()),
             "aux_pi3x_frac": float(aux_pi3x_frac.detach()),
         }

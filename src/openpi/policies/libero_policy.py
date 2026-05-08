@@ -273,6 +273,51 @@ class MixedPointTargetLoader(transforms.DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
+class DualPointTargetLoader(transforms.DataTransformFn):
+    """Inject separate simulator-GT and Pi3X targets for weighted dual-loss training."""
+
+    pi3x_root: str
+    gt_root: str
+    gt_weight: float = 0.5
+    cam_to_npz_subdir: tuple[tuple[str, str], ...] = (
+        ("base", "agent"),
+        ("left_wrist", "wrist"),
+    )
+
+    def __post_init__(self):
+        if not 0.0 <= self.gt_weight <= 1.0:
+            raise ValueError(f"gt_weight must be in [0, 1], got {self.gt_weight}")
+
+    def __call__(self, data: dict) -> dict:
+        episode_index = int(np.asarray(data["episode_index"]).item())
+        frame_index = int(np.asarray(data["frame_index"]).item())
+
+        xy_pi3x, logz_pi3x, conf_pi3x = _load_point_target_views(
+            self.pi3x_root,
+            episode_index,
+            frame_index,
+            self.cam_to_npz_subdir,
+        )
+        xy_gt, logz_gt, conf_gt = _load_point_target_views(
+            self.gt_root,
+            episode_index,
+            frame_index,
+            self.cam_to_npz_subdir,
+        )
+
+        # Keep the two teachers separate. The model computes
+        # alpha * L(pred, GT) + (1-alpha) * L(pred, Pi3X).
+        data["point_target_xy"] = xy_gt
+        data["point_target_logz"] = logz_gt
+        data["point_target_conf"] = conf_gt
+        data["pi3x_target_xy"] = xy_pi3x
+        data["pi3x_target_logz"] = logz_pi3x
+        data["pi3x_target_conf"] = conf_pi3x
+        data["point_target_source"] = np.asarray(self.gt_weight, dtype=np.float32)
+        return data
+
+
+@dataclasses.dataclass(frozen=True)
 class LiberoOutputs(transforms.DataTransformFn):
     """
     This class is used to convert outputs from the model back the the dataset specific format. It is
