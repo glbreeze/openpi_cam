@@ -352,6 +352,12 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
     point_target_gt_ratio: float = 0.5
     point_target_mix_seed: int = 0
     point_target_mix_mode: Literal["sample", "dual_loss"] = "sample"
+    # Set to True when consuming a Pi3X cache produced before the
+    # `cache_pi3x_targets._prep_images` orientation fix. Applies a 180-degree
+    # spatial flip to Pi3X-loaded views (only) at load time so they line up with
+    # the parquet-orientation image the model trains on. Leave False for caches
+    # generated with the fixed script.
+    pi3x_cache_legacy_flip: bool = False
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -395,6 +401,7 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
                         gt_root=self.gt_point_targets_root,
                         gt_ratio=self.point_target_gt_ratio,
                         seed=self.point_target_mix_seed,
+                        pi3x_legacy_flip=self.pi3x_cache_legacy_flip,
                     )
                 )
             elif self.point_target_mix_mode == "dual_loss":
@@ -403,12 +410,18 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
                         pi3x_root=self.pi3x_targets_root,
                         gt_root=self.gt_point_targets_root,
                         gt_weight=self.point_target_gt_ratio,
+                        pi3x_legacy_flip=self.pi3x_cache_legacy_flip,
                     )
                 )
             else:
                 raise ValueError(f"Unsupported point_target_mix_mode={self.point_target_mix_mode!r}")
         elif self.pi3x_targets_root is not None:
-            repack_inputs.append(libero_policy.Pi3xLiberoTargetLoader(root=self.pi3x_targets_root))
+            repack_inputs.append(
+                libero_policy.Pi3xLiberoTargetLoader(
+                    root=self.pi3x_targets_root,
+                    pi3x_legacy_flip=self.pi3x_cache_legacy_flip,
+                )
+            )
         elif self.gt_point_targets_root is not None:
             repack_inputs.append(
                 libero_policy.MixedPointTargetLoader(
@@ -864,6 +877,7 @@ _CONFIGS = [
             extra_delta_transform=False,
             include_cam_extrinsics=True,
             pi3x_targets_root=str(pathlib.Path("~/.cache/openpi/pi3x_targets/libero_object_cam_v3").expanduser()),
+            pi3x_cache_legacy_flip=True,
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
@@ -901,6 +915,7 @@ _CONFIGS = [
             pi3x_targets_root=str(
                 pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
             ),
+            pi3x_cache_legacy_flip=True,
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
@@ -946,6 +961,7 @@ _CONFIGS = [
             pi3x_targets_root=str(
                 pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
             ),
+            pi3x_cache_legacy_flip=True,
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=5_000,
@@ -1012,6 +1028,7 @@ _CONFIGS = [
             pi3x_targets_root=str(
                 pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
             ),
+            pi3x_cache_legacy_flip=True,
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=5_000,
@@ -1066,6 +1083,7 @@ _CONFIGS = [
             pi3x_targets_root=str(
                 pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
             ),
+            pi3x_cache_legacy_flip=True,
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=5_000,
@@ -1119,6 +1137,7 @@ _CONFIGS = [
             pi3x_targets_root=str(
                 pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
             ),
+            pi3x_cache_legacy_flip=True,
             gt_point_targets_root=str(
                 pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3_aligned").expanduser()
             ),
@@ -1176,6 +1195,7 @@ _CONFIGS = [
             pi3x_targets_root=str(
                 pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
             ),
+            pi3x_cache_legacy_flip=True,
             gt_point_targets_root=str(
                 pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3_aligned").expanduser()
             ),
@@ -1227,6 +1247,7 @@ _CONFIGS = [
             pi3x_targets_root=str(
                 pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
             ),
+            pi3x_cache_legacy_flip=True,
         ),
         # IMPORTANT: replace this with the actual Stage 1 final checkpoint path before
         # launching Stage 2, e.g.:
@@ -1275,6 +1296,7 @@ _CONFIGS = [
             pi3x_targets_root=str(
                 pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
             ),
+            pi3x_cache_legacy_flip=True,
         ),
         # As with the base stage2 recipe, override --pytorch_weight_path with the
         # actual Stage 1 checkpoint at launch time.
@@ -1318,6 +1340,7 @@ _CONFIGS = [
             pi3x_targets_root=str(
                 pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
             ),
+            pi3x_cache_legacy_flip=True,
             gt_point_targets_root=str(
                 pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3_aligned").expanduser()
             ),
@@ -1363,6 +1386,7 @@ _CONFIGS = [
             pi3x_targets_root=str(
                 pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
             ),
+            pi3x_cache_legacy_flip=True,
             gt_point_targets_root=str(
                 pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3_aligned").expanduser()
             ),

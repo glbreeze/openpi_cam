@@ -164,6 +164,17 @@ class LiberoInputs(transforms.DataTransformFn):
         return inputs
 
 
+def _spatial_flip_views(arrays: tuple[np.ndarray, ...]) -> tuple[np.ndarray, ...]:
+    """Apply a per-view 180-degree spatial flip to (V, H, W, C) arrays.
+
+    Used to compensate for legacy Pi3X caches generated before the
+    `cache_pi3x_targets._prep_images` orientation fix: the cached arrays were
+    aligned to the un-rotated MuJoCo image, so they need flipping to match the
+    parquet-orientation image the model trains on.
+    """
+    return tuple(np.ascontiguousarray(a[:, ::-1, ::-1, :]) for a in arrays)
+
+
 @dataclasses.dataclass(frozen=True)
 class Pi3xLiberoTargetLoader(transforms.DataTransformFn):
     """Inject pre-computed Pi3X patch-level distillation targets into the data dict.
@@ -177,6 +188,10 @@ class Pi3xLiberoTargetLoader(transforms.DataTransformFn):
     (`base_0_rgb`, `left_wrist_0_rgb`, ...). Padded views (e.g. LIBERO's
     `right_wrist_0_rgb`) have no teacher target and are excluded — the loss site
     slices `pred[:, :V]` to match.
+
+    `pi3x_legacy_flip=True` applies a 180-degree spatial flip to the loaded
+    arrays. Set this when consuming a Pi3X cache produced before the
+    `cache_pi3x_targets._prep_images` orientation fix; new caches do not need it.
     """
 
     root: str
@@ -184,6 +199,7 @@ class Pi3xLiberoTargetLoader(transforms.DataTransformFn):
         ("base", "agent"),
         ("left_wrist", "wrist"),
     )
+    pi3x_legacy_flip: bool = False
 
     def __call__(self, data: dict) -> dict:
         episode_index = int(np.asarray(data["episode_index"]).item())
@@ -195,6 +211,8 @@ class Pi3xLiberoTargetLoader(transforms.DataTransformFn):
             frame_index,
             self.cam_to_npz_subdir,
         )
+        if self.pi3x_legacy_flip:
+            xy, logz, conf = _spatial_flip_views((xy, logz, conf))
 
         data["pi3x_target_xy"] = xy
         data["pi3x_target_logz"] = logz
@@ -242,6 +260,7 @@ class MixedPointTargetLoader(transforms.DataTransformFn):
         ("base", "agent"),
         ("left_wrist", "wrist"),
     )
+    pi3x_legacy_flip: bool = False
 
     def __post_init__(self):
         if not 0.0 <= self.gt_ratio <= 1.0:
@@ -264,6 +283,10 @@ class MixedPointTargetLoader(transforms.DataTransformFn):
             frame_index,
             self.cam_to_npz_subdir,
         )
+        # Only Pi3X-loaded views need the legacy flip; GT-loaded views are
+        # already in parquet-orientation.
+        if self.pi3x_legacy_flip and source == 0:
+            xy, logz, conf = _spatial_flip_views((xy, logz, conf))
         data["point_target_xy"] = xy
         data["point_target_logz"] = logz
         data["point_target_conf"] = conf
@@ -283,6 +306,7 @@ class DualPointTargetLoader(transforms.DataTransformFn):
         ("base", "agent"),
         ("left_wrist", "wrist"),
     )
+    pi3x_legacy_flip: bool = False
 
     def __post_init__(self):
         if not 0.0 <= self.gt_weight <= 1.0:
@@ -298,6 +322,8 @@ class DualPointTargetLoader(transforms.DataTransformFn):
             frame_index,
             self.cam_to_npz_subdir,
         )
+        if self.pi3x_legacy_flip:
+            xy_pi3x, logz_pi3x, conf_pi3x = _spatial_flip_views((xy_pi3x, logz_pi3x, conf_pi3x))
         xy_gt, logz_gt, conf_gt = _load_point_target_views(
             self.gt_root,
             episode_index,
