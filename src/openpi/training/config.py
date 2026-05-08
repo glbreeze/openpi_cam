@@ -48,6 +48,7 @@ def _get_local_geo_root() -> pathlib.Path:
 
 
 LOCAL_GEO_ROOT = _get_local_geo_root()
+LOCAL_OPENPI_CACHE = LOCAL_GEO_ROOT / ".cache" / "openpi"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -913,7 +914,7 @@ _CONFIGS = [
             extra_delta_transform=False,
             include_cam_extrinsics=True,
             pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+                LOCAL_OPENPI_CACHE / "pi3x_targets_224" / "libero_object_cam_v3"
             ),
             pi3x_cache_legacy_flip=True,
         ),
@@ -959,7 +960,7 @@ _CONFIGS = [
             extra_delta_transform=False,
             include_cam_extrinsics=True,
             pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+                LOCAL_OPENPI_CACHE / "pi3x_targets_224" / "libero_object_cam_v3"
             ),
             pi3x_cache_legacy_flip=True,
         ),
@@ -1026,7 +1027,7 @@ _CONFIGS = [
             extra_delta_transform=False,
             include_cam_extrinsics=True,
             pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+                LOCAL_OPENPI_CACHE / "pi3x_targets_224" / "libero_object_cam_v3"
             ),
             pi3x_cache_legacy_flip=True,
         ),
@@ -1081,7 +1082,7 @@ _CONFIGS = [
             extra_delta_transform=False,
             include_cam_extrinsics=True,
             pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+                LOCAL_OPENPI_CACHE / "pi3x_targets_224" / "libero_object_cam_v3"
             ),
             pi3x_cache_legacy_flip=True,
         ),
@@ -1135,11 +1136,11 @@ _CONFIGS = [
             extra_delta_transform=False,
             include_cam_extrinsics=True,
             pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+                LOCAL_OPENPI_CACHE / "pi3x_targets_224" / "libero_object_cam_v3"
             ),
             pi3x_cache_legacy_flip=True,
             gt_point_targets_root=str(
-                pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3_aligned").expanduser()
+                LOCAL_OPENPI_CACHE / "gt_point_targets_224" / "libero_object_cam_v3_aligned"
             ),
             point_target_gt_ratio=0.5,
         ),
@@ -1178,10 +1179,6 @@ _CONFIGS = [
                 loss_weight=1.0,
                 output_resolution=224,
             ),
-            ray_embed_pi3x_init_path=str(
-                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
-            ),
-            ray_embed_pi3x_init_scale=1.0,
         ),
         data=LeRobotLiberoDataConfig(
             repo_id=f"{HF_NAME}/libero_object_cam_v3",
@@ -1193,11 +1190,11 @@ _CONFIGS = [
             extra_delta_transform=False,
             include_cam_extrinsics=True,
             pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+                LOCAL_OPENPI_CACHE / "pi3x_targets_224" / "libero_object_cam_v3"
             ),
             pi3x_cache_legacy_flip=True,
             gt_point_targets_root=str(
-                pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3_aligned").expanduser()
+                LOCAL_OPENPI_CACHE / "gt_point_targets_224" / "libero_object_cam_v3_aligned"
             ),
             point_target_gt_ratio=0.5,
             point_target_mix_mode="dual_loss",
@@ -1245,7 +1242,7 @@ _CONFIGS = [
             extra_delta_transform=False,
             include_cam_extrinsics=True,
             pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+                LOCAL_OPENPI_CACHE / "pi3x_targets_224" / "libero_object_cam_v3"
             ),
             pi3x_cache_legacy_flip=True,
         ),
@@ -1294,7 +1291,7 @@ _CONFIGS = [
             extra_delta_transform=False,
             include_cam_extrinsics=True,
             pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+                LOCAL_OPENPI_CACHE / "pi3x_targets_224" / "libero_object_cam_v3"
             ),
             pi3x_cache_legacy_flip=True,
         ),
@@ -1323,10 +1320,6 @@ _CONFIGS = [
                 loss_weight=0.05,
                 output_resolution=224,
             ),
-            ray_embed_pi3x_init_path=str(
-                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
-            ),
-            ray_embed_pi3x_init_scale=1.0,
         ),
         data=LeRobotLiberoDataConfig(
             repo_id=f"{HF_NAME}/libero_object_cam_v3",
@@ -1338,11 +1331,11 @@ _CONFIGS = [
             extra_delta_transform=False,
             include_cam_extrinsics=True,
             pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+                LOCAL_OPENPI_CACHE / "pi3x_targets_224" / "libero_object_cam_v3"
             ),
             pi3x_cache_legacy_flip=True,
             gt_point_targets_root=str(
-                pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3_aligned").expanduser()
+                LOCAL_OPENPI_CACHE / "gt_point_targets_224" / "libero_object_cam_v3_aligned"
             ),
             point_target_gt_ratio=0.5,
         ),
@@ -1369,10 +1362,6 @@ _CONFIGS = [
                 loss_weight=0.05,
                 output_resolution=224,
             ),
-            ray_embed_pi3x_init_path=str(
-                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
-            ),
-            ray_embed_pi3x_init_scale=1.0,
         ),
         data=LeRobotLiberoDataConfig(
             repo_id=f"{HF_NAME}/libero_object_cam_v3",
@@ -1384,11 +1373,11 @@ _CONFIGS = [
             extra_delta_transform=False,
             include_cam_extrinsics=True,
             pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+                LOCAL_OPENPI_CACHE / "pi3x_targets_224" / "libero_object_cam_v3"
             ),
             pi3x_cache_legacy_flip=True,
             gt_point_targets_root=str(
-                pathlib.Path("~/.cache/openpi/gt_point_targets_224/libero_object_cam_v3_aligned").expanduser()
+                LOCAL_OPENPI_CACHE / "gt_point_targets_224" / "libero_object_cam_v3_aligned"
             ),
             point_target_gt_ratio=0.5,
             point_target_mix_mode="dual_loss",
