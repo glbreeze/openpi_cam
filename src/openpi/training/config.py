@@ -1050,6 +1050,8 @@ _CONFIGS = [
             aux_point_head=point_head_config.AuxPointHeadConfig(
                 enabled=True,
                 loss_weight=1.0,
+                loss_type="legacy_conf_mse",
+                legacy_conf_threshold=0.1,
                 output_resolution=224,
             ),
         ),
@@ -1332,6 +1334,8 @@ _CONFIGS = [
             aux_point_head=point_head_config.AuxPointHeadConfig(
                 enabled=True,
                 loss_weight=0.05,
+                loss_type="legacy_conf_mse",
+                legacy_conf_threshold=0.1,
                 output_resolution=224,
             ),
         ),

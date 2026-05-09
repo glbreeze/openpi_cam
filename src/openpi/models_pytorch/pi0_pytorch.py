@@ -197,6 +197,28 @@ def _pi3x_point_loss(
     return total, ray_loss, depth_loss, scale
 
 
+def _legacy_conf_mse_point_loss(
+    xy_pred: Tensor,
+    logz_pred: Tensor,
+    xy_target: Tensor,
+    logz_target: Tensor,
+    conf_target: Tensor,
+    view_mask: Tensor,
+    *,
+    conf_threshold: float,
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    mask = (torch.sigmoid(conf_target) > conf_threshold).to(xy_pred.dtype)
+    mask = mask * view_mask[:, :, None, None].to(xy_pred.dtype)
+
+    denom = mask.sum().clamp_min(1.0)
+    xy_loss = ((xy_pred - xy_target) ** 2 * mask).sum() / denom / xy_pred.shape[-1]
+    z_loss = ((logz_pred - logz_target) ** 2 * mask).sum() / denom
+
+    total = xy_loss + z_loss
+    scale = torch.ones(xy_pred.shape[0], dtype=xy_pred.dtype, device=xy_pred.device)
+    return total, xy_loss, z_loss, scale
+
+
 def make_att_2d_masks(pad_masks, att_masks):
     """Copied from big_vision.
 
@@ -741,22 +763,33 @@ class PI0Pytorch(nn.Module):
                     xy_pred_v = xy_pred[:, :v_tgt]
                     z_pred_v = z_pred[:, :v_tgt]
 
-                    conf_weights = torch.sigmoid(conf_tgt_f).to(xy_pred.dtype)
                     view_mask = img_masks[:, :v_tgt].to(xy_pred.dtype)
-                    conf_weights = conf_weights * view_mask[:, :, None, None]
-
-                    return _pi3x_point_loss(
-                        xy_pred_v,
-                        z_pred_v,
-                        xy_tgt_f,
-                        logz_tgt_f,
-                        conf_weights,
-                        view_mask,
-                        scale_align_num_points=ph_cfg.scale_align_num_points,
-                        depth_weight_min_frac=ph_cfg.depth_weight_min_frac,
-                        ray_loss_weight=ph_cfg.ray_loss_weight,
-                        depth_loss_weight=ph_cfg.depth_loss_weight,
-                    )
+                    if ph_cfg.loss_type == "legacy_conf_mse":
+                        return _legacy_conf_mse_point_loss(
+                            xy_pred_v,
+                            z_pred_v,
+                            xy_tgt_f,
+                            logz_tgt_f,
+                            conf_tgt_f,
+                            view_mask,
+                            conf_threshold=ph_cfg.legacy_conf_threshold,
+                        )
+                    if ph_cfg.loss_type == "pi3x_local_pointmap":
+                        conf_weights = torch.sigmoid(conf_tgt_f).to(xy_pred.dtype)
+                        conf_weights = conf_weights * view_mask[:, :, None, None]
+                        return _pi3x_point_loss(
+                            xy_pred_v,
+                            z_pred_v,
+                            xy_tgt_f,
+                            logz_tgt_f,
+                            conf_weights,
+                            view_mask,
+                            scale_align_num_points=ph_cfg.scale_align_num_points,
+                            depth_weight_min_frac=ph_cfg.depth_weight_min_frac,
+                            ray_loss_weight=ph_cfg.ray_loss_weight,
+                            depth_loss_weight=ph_cfg.depth_loss_weight,
+                        )
+                    raise ValueError(f"Unsupported aux point loss_type: {ph_cfg.loss_type!r}")
 
                 if has_point_target and has_pi3x_target:
                     source = (

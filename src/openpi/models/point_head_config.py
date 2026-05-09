@@ -1,4 +1,5 @@
 import dataclasses
+import typing
 
 
 @dataclasses.dataclass(frozen=True)
@@ -20,6 +21,12 @@ class AuxPointHeadConfig:
     qk_norm: bool = True
     init_values: float = 0.01
     loss_weight: float = 1.0  # scalar weight on the point distillation loss.
+    loss_type: typing.Literal[
+        "pi3x_local_pointmap",
+        "legacy_conf_mse",
+    ] = "pi3x_local_pointmap"
+    # Original full-res best-recipe loss: hard confidence gate, then MSE on xy/logz.
+    legacy_conf_threshold: float = 0.1
     # Pi3X-style scale-invariant local pointmap supervision: exp(log_z),
     # build local points (xy * z, z), align one scale per sample, then supervise rays
     # and aligned depth.
