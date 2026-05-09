@@ -60,6 +60,30 @@ CAM_SPECS = (
 )
 
 
+def _parse_cam_spec(spec_str: str | None) -> tuple[dict, ...]:
+    """Parse `--cam-spec`. Default (None) returns the LIBERO 2-cam tuple above.
+
+    Format: comma-separated `name:image_col:intrinsic_col` triples. Example for
+    RoboTwin (3 cams):
+        head:cam_high:cam_high_intrinsic,
+        left_wrist:cam_left_wrist:cam_left_wrist_intrinsic,
+        right_wrist:cam_right_wrist:cam_right_wrist_intrinsic
+    """
+    if not spec_str:
+        return CAM_SPECS
+    specs = []
+    for token in spec_str.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        parts = token.split(":")
+        if len(parts) != 3:
+            raise ValueError(f"--cam-spec entry must be name:image_col:intrinsic_col, got {token!r}")
+        name, image_col, intrinsic_col = (p.strip() for p in parts)
+        specs.append({"name": name, "image_col": image_col, "intrinsic_col": intrinsic_col})
+    return tuple(specs)
+
+
 def _decode_image_field(value) -> np.ndarray:
     if isinstance(value, np.ndarray):
         if value.dtype != np.uint8:
@@ -189,8 +213,9 @@ def _process_episode(
     autocast_dtype: torch.dtype | None,
     output_resolution: int = 16,
     log_z_mode: str = "raw",
+    cam_specs: tuple[dict, ...] = CAM_SPECS,
 ):
-    columns = ["image", "wrist_image", "agent_intrinsic", "wrist_intrinsic"]
+    columns = sorted({col for cam in cam_specs for col in (cam["image_col"], cam["intrinsic_col"])})
     table = pq.read_table(parquet_path, columns=columns)
     rows = table.to_pylist()
     if not rows:
@@ -200,7 +225,7 @@ def _process_episode(
     scale = target_hw / src_hw
     R = output_resolution
 
-    for cam in CAM_SPECS:
+    for cam in cam_specs:
         out_path = output_root / cam["name"] / f"{parquet_path.stem}.npz"
         if out_path.exists():
             continue
@@ -349,8 +374,24 @@ def main():
         action="store_true",
         help="Disable bfloat16/float16 autocast in Pi3X forward (slower, ~2x memory).",
     )
+    parser.add_argument(
+        "--cam-spec",
+        type=str,
+        default=None,
+        help="Override CAM_SPECS: comma-separated `name:image_col:intrinsic_col` triples. "
+        "Default (omitted): LIBERO 2-cam (agent:image:agent_intrinsic, wrist:wrist_image:wrist_intrinsic). "
+        "RoboTwin example: 'head:cam_high:cam_high_intrinsic,"
+        "left_wrist:cam_left_wrist:cam_left_wrist_intrinsic,"
+        "right_wrist:cam_right_wrist:cam_right_wrist_intrinsic'.",
+    )
+    parser.add_argument(
+        "--src-image-flip",
+        action="store_true",
+        help="If set, swap H/W check and skip the strict square-input assertion (for non-square src images).",
+    )
     parser.add_argument("--log-level", type=str, default="INFO")
     args = parser.parse_args()
+    cam_specs = _parse_cam_spec(args.cam_spec)
 
     logging.basicConfig(
         level=args.log_level,
@@ -372,7 +413,7 @@ def main():
     parquet_paths = _select_episodes(parquet_paths, args.episode_range)
 
     if not args.no_skip_existing:
-        cam_names = [c["name"] for c in CAM_SPECS]
+        cam_names = [c["name"] for c in cam_specs]
         before = len(parquet_paths)
         parquet_paths = [p for p in parquet_paths if not _episode_outputs_exist(args.output_root, p.stem, cam_names)]
         skipped = before - len(parquet_paths)
@@ -388,7 +429,7 @@ def main():
     model = _build_pi3x(args.pi3x_repo, args.ckpt, device)
 
     args.output_root.mkdir(parents=True, exist_ok=True)
-    for cam in CAM_SPECS:
+    for cam in cam_specs:
         (args.output_root / cam["name"]).mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
@@ -404,6 +445,7 @@ def main():
             autocast_dtype=autocast_dtype,
             output_resolution=args.output_resolution,
             log_z_mode=args.log_z_mode,
+            cam_specs=cam_specs,
         )
         if (i + 1) % 10 == 0 or (i + 1) == len(parquet_paths):
             elapsed = time.time() - t0
