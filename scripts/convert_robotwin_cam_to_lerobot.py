@@ -57,8 +57,17 @@ DEFAULT_CAM_MAP = {
 
 
 def _resize_image(img: np.ndarray, target_hw: int) -> np.ndarray:
-    """Square-resize an HxWx3 uint8 image to target_hw x target_hw via torch bilinear."""
-    chw = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
+    """Square-resize an HxWx3 uint8 image to target_hw x target_hw via torch bilinear.
+
+    Applies a 180-degree (`[::-1, ::-1]`) flip first to match the openpi
+    cam-aware convention used by `convert_libero_hdf5_to_lerobot._preprocess_image`.
+    The matching `fx -> -fx` half of the flip is applied at training time by
+    `RobotwinCamInputs._adjust_K_for_openpi_image_flip` and at Pi3X-cache time
+    by `cache_pi3x_targets._adjust_K_openpi`. K stored in the parquet stays
+    fx-positive (i.e. natural-orientation) — same as LIBERO.
+    """
+    flipped = np.ascontiguousarray(img[::-1, ::-1])
+    chw = torch.from_numpy(flipped).permute(2, 0, 1).float() / 255.0
     chw = torch.nn.functional.interpolate(chw[None], size=(target_hw, target_hw), mode="bilinear", align_corners=False)[0]
     chw = (chw * 255.0).clamp(0, 255).to(torch.uint8).numpy()
     return chw
