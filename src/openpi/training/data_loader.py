@@ -413,12 +413,17 @@ def create_torch_dataset(
             len(episodes),
         )
 
+    # LeRobot's default video backend is torchcodec which requires system FFmpeg
+    # shared libs (libavutil etc.). pyav is a self-contained pip wheel and works
+    # with the same outputs. This only affects datasets stored as video (e.g.
+    # RoboTwin); image-only datasets like LIBERO are unaffected.
     dataset = lerobot_dataset.LeRobotDataset(
         data_config.repo_id,
         episodes=episodes,
         delta_timestamps={
             key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
         },
+        video_backend="pyav",
     )
 
     if data_config.prompt_from_task:

@@ -112,3 +112,67 @@ class RobotwinOutputs(transforms.DataTransformFn):
 
     def __call__(self, data: dict) -> dict:
         return aloha_policy.AlohaOutputs(adapt_to_pi=self.adapt_to_pi)(data)
+
+
+def _adjust_K_for_openpi_image_flip(K) -> np.ndarray:
+    """`fx -> -fx` flip; mirrors `libero_policy._adjust_K_for_openpi_image_flip`.
+
+    openpi's `_preprocess_image` runs `[::-1, ::-1]` on every input. Negating the
+    intrinsic's fx absorbs the horizontal flip; cy/fy stay unchanged because cy=H/2
+    and the y-flip is consistent with positive fy in the OpenCV pinhole model.
+    """
+    K_out = np.asarray(K, dtype=np.float32).copy()
+    K_out[..., 0, 0] = -K_out[..., 0, 0]
+    return K_out
+
+
+@dataclasses.dataclass(frozen=True)
+class RobotwinCamInputs(transforms.DataTransformFn):
+    """Cam-aware Robotwin inputs. Same image/state path as `RobotwinInputs`, plus
+    plumbs per-camera extrinsics + intrinsics for the cam-aware Pi0 (PRoPE+ray
+    encoder) recipe.
+
+    Expected dataset keys (after the data-config repack):
+        observation/cam_high_extrinsic, observation/cam_high_intrinsic
+        observation/cam_left_wrist_extrinsic, observation/cam_left_wrist_intrinsic
+        observation/cam_right_wrist_extrinsic, observation/cam_right_wrist_intrinsic
+    Mapping (RoboTwin → openpi model field):
+        cam_high       -> agent_*
+        cam_left_wrist -> wrist_*
+        cam_right_wrist-> right_wrist_*
+    Extrinsics are stored as camera-to-world (T_wc) in OpenCV camera frame by the
+    converter, so no MuJoCo-style frame fix is needed; only the openpi `fx -> -fx`
+    flip is applied to each K.
+    """
+
+    model_type: _model.ModelType
+    adapt_to_pi: bool = True
+
+    def __call__(self, data: dict) -> dict:
+        out = RobotwinInputs(model_type=self.model_type, adapt_to_pi=self.adapt_to_pi)(data)
+
+        cam_field_pairs = [
+            ("cam_high", "agent"),
+            ("cam_left_wrist", "wrist"),
+            ("cam_right_wrist", "right_wrist"),
+        ]
+        for src_cam, dst_cam in cam_field_pairs:
+            for ext_key in (f"observation.{src_cam}_extrinsic", f"observation/{src_cam}_extrinsic"):
+                if ext_key in data:
+                    out[f"{dst_cam}_extrinsic"] = np.asarray(data[ext_key], dtype=np.float32)
+                    break
+            for intr_key in (f"observation.{src_cam}_intrinsic", f"observation/{src_cam}_intrinsic"):
+                if intr_key in data:
+                    out[f"{dst_cam}_intrinsic"] = _adjust_K_for_openpi_image_flip(data[intr_key])
+                    break
+
+        # Carry geometry-distillation targets through (Pi3X / GT mixed dual-loss).
+        for key in (
+            "pi3x_target_xy", "pi3x_target_logz", "pi3x_target_conf",
+            "point_target_xy", "point_target_logz", "point_target_conf",
+            "point_target_source",
+        ):
+            if key in data:
+                out[key] = data[key]
+
+        return out
