@@ -354,6 +354,11 @@ class LeRobotRobotwinCamDataConfig(DataConfigFactory):
     point_target_gt_ratio: float = 0.5
     point_target_mix_seed: int = 0
     point_target_mix_mode: Literal["sample", "dual_loss"] = "sample"
+    # Mirrors LeRobotLiberoDataConfig.pi3x_cache_legacy_flip. Default False
+    # because the RoboTwin caches in this repo were built with the fixed
+    # cache_pi3x_targets._prep_images orientation. Set True only if you
+    # somehow re-cache against an old/legacy script.
+    pi3x_cache_legacy_flip: bool = False
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -386,6 +391,7 @@ class LeRobotRobotwinCamDataConfig(DataConfigFactory):
                         gt_root=self.gt_point_targets_root,
                         gt_ratio=self.point_target_gt_ratio,
                         seed=self.point_target_mix_seed,
+                        pi3x_legacy_flip=self.pi3x_cache_legacy_flip,
                     )
                 )
             elif self.point_target_mix_mode == "dual_loss":
@@ -394,12 +400,18 @@ class LeRobotRobotwinCamDataConfig(DataConfigFactory):
                         pi3x_root=self.pi3x_targets_root,
                         gt_root=self.gt_point_targets_root,
                         gt_weight=self.point_target_gt_ratio,
+                        pi3x_legacy_flip=self.pi3x_cache_legacy_flip,
                     )
                 )
             else:
                 raise ValueError(f"Unsupported point_target_mix_mode={self.point_target_mix_mode!r}")
         elif self.pi3x_targets_root is not None:
-            repack_inputs.append(libero_policy.Pi3xLiberoTargetLoader(root=self.pi3x_targets_root))
+            repack_inputs.append(
+                libero_policy.Pi3xLiberoTargetLoader(
+                    root=self.pi3x_targets_root,
+                    pi3x_legacy_flip=self.pi3x_cache_legacy_flip,
+                )
+            )
         elif self.gt_point_targets_root is not None:
             repack_inputs.append(
                 libero_policy.MixedPointTargetLoader(
@@ -1916,6 +1928,100 @@ _CONFIGS = [
         num_train_steps=30_000,
         batch_size=8,
     ),
+    # ---------- Vanilla Pi3X-only distillation (mirrors LIBERO base recipe) ----------
+    # Stage 1 (5k): Pi3X-only point-head distillation. Single-block cross-view fusion
+    # (aa_order="fg", prope on layer 0). Backbone frozen. Same numbers as
+    # `pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage1`.
+    TrainConfig(
+        name="pi0_robotwin_cam_prope_ray_view_distill_fullres_stage1",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=0.1,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=1.0,
+                output_resolution=224,
+            ),
+        ),
+        data=LeRobotRobotwinCamDataConfig(
+            repo_id="robotwin/beat_block_hammer_demo_clean_camaware_50",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id="robotwin/beat_block_hammer_demo_clean_camaware_50",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            include_cam_extrinsics=True,
+            pi3x_targets_root=str(
+                pathlib.Path(
+                    "~/.cache/openpi/pi3x_targets_224/robotwin_beat_block_hammer_demo_clean_camaware_50"
+                ).expanduser()
+            ),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=5_000,
+        batch_size=8,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+        trainable_prefixes=(
+            "cross_view_fusion",
+            "ray_embed",
+            "aux_point_head",
+        ),
+    ),
+    # Stage 2 (30k): unfreeze; action_loss_weight=1.0, aux_point_head.loss_weight=0.05.
+    # Same fg/prope_layer=(0,) shape as Stage 1. Warm-start from Stage 1 final ckpt
+    # via `--pytorch_weight_path`. Same numbers as
+    # `pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage2`.
+    TrainConfig(
+        name="pi0_robotwin_cam_prope_ray_view_distill_fullres_stage2",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=0.05,
+                output_resolution=224,
+            ),
+        ),
+        data=LeRobotRobotwinCamDataConfig(
+            repo_id="robotwin/beat_block_hammer_demo_clean_camaware_50",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id="robotwin/beat_block_hammer_demo_clean_camaware_50",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            include_cam_extrinsics=True,
+            pi3x_targets_root=str(
+                pathlib.Path(
+                    "~/.cache/openpi/pi3x_targets_224/robotwin_beat_block_hammer_demo_clean_camaware_50"
+                ).expanduser()
+            ),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+        batch_size=8,
+    ),
+    # ---------- Pi3X + simulator-GT mixed dual-loss variant (deeper fgfg fusion) ----------
     # Stage 1 (5k): freeze backbone; train only cross_view_fusion + ray_embed +
     # aux_point_head with dual-loss alpha*L(GT) + (1-alpha)*L(Pi3X), alpha=0.5,
     # action_loss_weight=0.1.

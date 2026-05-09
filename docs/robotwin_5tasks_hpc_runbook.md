@@ -101,9 +101,55 @@ All four checkmarks needed per task.
 
 ---
 
-## 3. Stage 1 training (5,000 steps, freeze backbone)
+## 3. Choose the recipe
 
-The recipe: `pi0_robotwin_cam_prope_ray_view_distill_fullres_stage1_gtdual`.
+Two recipes are available, both implementing the cam-aware Pi0 + point-head
+distillation chain. Pick **one** and stick with it across Stage 1 + Stage 2 for
+a given task:
+
+| Recipe (config name suffix) | Cross-view shape | Distillation | Mirrors LIBERO recipe |
+|---|---|---|---|
+| `_distill_fullres_stage{1,2}` | `aa_order="fg"`, `prope_layer_idx=(0,)` (single-block) | **Pi3X-only** (no GT) | `pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage{1,2}` |
+| `_distill_fullres_stage{1,2}_gtdual` | `aa_order="fgfg"`, `prope_layer_idx=(0,1)` (two-block deeper) | **Pi3X + Sapien-GT dual loss** (α·L_GT + (1-α)·L_Pi3X, α=0.5) | `pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage{1,2}_gtdual` |
+
+The vanilla recipe is the closer apples-to-apples comparison vs your prior
+LIBERO numbers; the gtdual variant adds simulator-GT depth supervision and a
+deeper cross-view fusion. Both use the same Pi3X cache; gtdual additionally
+reads the Sapien-GT cache.
+
+Pick:
+- **`stage{1,2}` (Pi3X-only)** if you want to match the LIBERO baseline recipe one-for-one.
+- **`stage{1,2}_gtdual`** if you want the strongest result (deeper fusion + GT supervision).
+
+The sections below describe Stage 1 / Stage 2 / launch loop / wall-time for
+both recipes side by side.
+
+## 3a. Stage 1 training (5,000 steps, freeze backbone)
+
+### Vanilla recipe: `pi0_robotwin_cam_prope_ray_view_distill_fullres_stage1`
+
+- `pose_enc=prope`, `ray_enc=True`, `view_enc=False`, single-block fg cross-view fusion with PRoPE on layer (0,)
+- AuxPointHead at output_resolution=224, loss_weight=1.0
+- `action_loss_weight=0.1`
+- Trainable: `cross_view_fusion`, `ray_embed`, `aux_point_head`
+- Loss: **L(Pi3X)** only (no GT)
+- LR: cosine, warmup 500, peak 2.5e-5, decay over 5,000 to 2.5e-6
+
+Submit per task with `scripts/sbatch/train_pi0_robotwin_s1_h200.sbatch`:
+
+```bash
+sbatch --export=ALL,TASK=handover_block        scripts/sbatch/train_pi0_robotwin_s1_h200.sbatch
+sbatch --export=ALL,TASK=stack_blocks_three    scripts/sbatch/train_pi0_robotwin_s1_h200.sbatch
+sbatch --export=ALL,TASK=place_container_plate scripts/sbatch/train_pi0_robotwin_s1_h200.sbatch
+sbatch --export=ALL,TASK=place_dual_shoes      scripts/sbatch/train_pi0_robotwin_s1_h200.sbatch
+sbatch --export=ALL,TASK=lift_pot              scripts/sbatch/train_pi0_robotwin_s1_h200.sbatch
+sbatch --export=ALL,TASK=beat_block_hammer     scripts/sbatch/train_pi0_robotwin_s1_h200.sbatch
+```
+
+Stage 2 launches the same way with `train_pi0_robotwin_s2_h200.sbatch` after
+Stage 1 succeeds (see §6 for the dependency-chain loop).
+
+### gtdual variant: `pi0_robotwin_cam_prope_ray_view_distill_fullres_stage1_gtdual`
 
 - `pose_enc=prope`, `ray_enc=True`, `view_enc=False`, fgfg cross-view fusion with PRoPE on layers (0,1)
 - AuxPointHead at output_resolution=224, loss_weight=1.0
@@ -113,7 +159,7 @@ The recipe: `pi0_robotwin_cam_prope_ray_view_distill_fullres_stage1_gtdual`.
 - Loss: α·L(GT) + (1-α)·L(Pi3X), α=0.5
 - LR: cosine, warmup 500, peak 2.5e-5, decay over 5,000 to 2.5e-6
 
-### 3.a SBATCH template
+### gtdual SBATCH template
 
 Use the same shape as your existing
 `train_pi0_libero_cam_v3_prope_ray_view_distill_fullres_stage1_gtdual_v3_h200_4gpu_b32.sbatch`,
@@ -355,9 +401,23 @@ pi0_robotwin_cam_baseline
 
 If your queue allows multiple parallel jobs:
 
+### Vanilla (Pi3X-only) recipe
+
 ```bash
 cd /scratch/yp2841/geometry-vla/openpi_cam
 
+for TASK in beat_block_hammer handover_block stack_blocks_three \
+            place_container_plate place_dual_shoes lift_pot; do
+    S1=$(sbatch --parsable --export=ALL,TASK=${TASK} \
+        scripts/sbatch/train_pi0_robotwin_s1_h200.sbatch)
+    sbatch --dependency=afterok:${S1} --export=ALL,TASK=${TASK} \
+        scripts/sbatch/train_pi0_robotwin_s2_h200.sbatch
+done
+```
+
+### gtdual recipe
+
+```bash
 for TASK in beat_block_hammer handover_block stack_blocks_three \
             place_container_plate place_dual_shoes lift_pot; do
     S1=$(sbatch --parsable --export=ALL,TASK=${TASK} \
@@ -367,8 +427,9 @@ for TASK in beat_block_hammer handover_block stack_blocks_three \
 done
 ```
 
-12 SLURM jobs (6 stage-1 + 6 stage-2). With h200 nodes you'll typically fit 2-4
-concurrent runs. Stage-2 jobs queue automatically once their stage-1 finishes.
+Either flow queues 12 SLURM jobs (6 stage-1 + 6 stage-2). With h200 nodes you'll
+typically fit 2-4 concurrent runs. Stage-2 jobs queue automatically once their
+stage-1 finishes.
 
 ---
 
