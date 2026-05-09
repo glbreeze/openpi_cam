@@ -19,7 +19,7 @@ IMAGE_RESOLUTION = (224, 224)
 _IMAGE_TO_CAMERA_FIELDS = {
     "base_0_rgb": ("agent_intrinsic", "agent_extrinsic"),
     "left_wrist_0_rgb": ("wrist_intrinsic", "wrist_extrinsic"),
-    "right_wrist_0_rgb": (None, None),
+    "right_wrist_0_rgb": ("right_wrist_intrinsic", "right_wrist_extrinsic"),
 }
 
 
@@ -198,10 +198,12 @@ def preprocess_observation_pytorch(
     updated_intrinsics = {
         "agent_intrinsic": _clone_optional_tensor(getattr(observation, "agent_intrinsic", None)),
         "wrist_intrinsic": _clone_optional_tensor(getattr(observation, "wrist_intrinsic", None)),
+        "right_wrist_intrinsic": _clone_optional_tensor(getattr(observation, "right_wrist_intrinsic", None)),
     }
     updated_extrinsics = {
         "agent_extrinsic": _clone_optional_tensor(getattr(observation, "agent_extrinsic", None)),
         "wrist_extrinsic": _clone_optional_tensor(getattr(observation, "wrist_extrinsic", None)),
+        "right_wrist_extrinsic": _clone_optional_tensor(getattr(observation, "right_wrist_extrinsic", None)),
     }
 
     out_images = {}
@@ -338,8 +340,10 @@ def preprocess_observation_pytorch(
         state=observation.state,
         agent_extrinsic=updated_extrinsics["agent_extrinsic"],
         wrist_extrinsic=updated_extrinsics["wrist_extrinsic"],
+        right_wrist_extrinsic=updated_extrinsics["right_wrist_extrinsic"],
         agent_intrinsic=updated_intrinsics["agent_intrinsic"],
         wrist_intrinsic=updated_intrinsics["wrist_intrinsic"],
+        right_wrist_intrinsic=updated_intrinsics["right_wrist_intrinsic"],
         pi3x_target_xy=_clone_optional_tensor(getattr(observation, "pi3x_target_xy", None)),
         pi3x_target_logz=_clone_optional_tensor(getattr(observation, "pi3x_target_logz", None)),
         pi3x_target_conf=_clone_optional_tensor(getattr(observation, "pi3x_target_conf", None)),

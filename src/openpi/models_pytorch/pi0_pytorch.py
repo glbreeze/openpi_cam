@@ -479,13 +479,30 @@ class PI0Pytorch(nn.Module):
 
         # Per-camera extrinsics/intrinsics as dicts keyed by cam name. embed_image
         # stacks these to (B, V, 4, 4)/(B, V, 3, 3) with identity fallback as needed.
+        # `right_wrist_*` is optional and stays None for 2-cam datasets like LIBERO;
+        # populated for 3-cam bimanual datasets (e.g. RoboTwin).
+        right_wrist_extrinsic = getattr(obs, "right_wrist_extrinsic", None)
+        right_wrist_intrinsic = getattr(obs, "right_wrist_intrinsic", None)
+
         cam_pos = None
         if self.pose_enc_type != "null":
-            cam_pos = {"base": obs.agent_extrinsic, "left_wrist": obs.wrist_extrinsic, "right_wrist": None}
+            cam_pos = {
+                "base": obs.agent_extrinsic,
+                "left_wrist": obs.wrist_extrinsic,
+                "right_wrist": right_wrist_extrinsic,
+            }
 
         cam_intr = None
-        if obs.agent_intrinsic is not None or obs.wrist_intrinsic is not None:
-            cam_intr = {"base": obs.agent_intrinsic, "left_wrist": obs.wrist_intrinsic, "right_wrist": None}
+        if (
+            obs.agent_intrinsic is not None
+            or obs.wrist_intrinsic is not None
+            or right_wrist_intrinsic is not None
+        ):
+            cam_intr = {
+                "base": obs.agent_intrinsic,
+                "left_wrist": obs.wrist_intrinsic,
+                "right_wrist": right_wrist_intrinsic,
+            }
 
         # -------------- Process images (vision_tower + multi_modal_projector) --------------
         def image_embed_func(images, img_masks, cam_pos, cam_intr):

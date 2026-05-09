@@ -99,6 +99,11 @@ class Observation(Generic[ArrayT]):
     wrist_extrinsic: at.Float[ArrayT, "*b 4 4"] | None = None
     agent_intrinsic: at.Float[ArrayT, "*b 3 3"] | None = None
     wrist_intrinsic: at.Float[ArrayT, "*b 3 3"] | None = None
+    # Optional second wrist (3-cam bimanual setups, e.g. RoboTwin's right_camera).
+    # Default None preserves the 2-cam LIBERO behavior; PyTorch model code falls
+    # back to identity / no-op when these are None.
+    right_wrist_extrinsic: at.Float[ArrayT, "*b 4 4"] | None = None
+    right_wrist_intrinsic: at.Float[ArrayT, "*b 3 3"] | None = None
 
     # Pi3x patch-resolution distillation targets, stacked across views in the order
     # `(base_0_rgb, left_wrist_0_rgb, ...)`. V is typically 2 for LIBERO (third view
@@ -147,6 +152,8 @@ class Observation(Generic[ArrayT]):
             wrist_extrinsic=data.get("wrist_extrinsic"),  # ---- NEW ----
             agent_intrinsic=data.get("agent_intrinsic"),
             wrist_intrinsic=data.get("wrist_intrinsic"),
+            right_wrist_extrinsic=data.get("right_wrist_extrinsic"),
+            right_wrist_intrinsic=data.get("right_wrist_intrinsic"),
             pi3x_target_xy=data.get("pi3x_target_xy"),
             pi3x_target_logz=data.get("pi3x_target_logz"),
             pi3x_target_conf=data.get("pi3x_target_conf"),
@@ -241,6 +248,8 @@ def preprocess_observation(
         wrist_extrinsic=observation.wrist_extrinsic,
         agent_intrinsic=observation.agent_intrinsic,
         wrist_intrinsic=observation.wrist_intrinsic,
+        right_wrist_extrinsic=observation.right_wrist_extrinsic,
+        right_wrist_intrinsic=observation.right_wrist_intrinsic,
         pi3x_target_xy=observation.pi3x_target_xy,
         pi3x_target_logz=observation.pi3x_target_logz,
         pi3x_target_conf=observation.pi3x_target_conf,
