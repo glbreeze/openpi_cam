@@ -347,7 +347,16 @@ class LeRobotRobotwinCamDataConfig(DataConfigFactory):
 
     use_delta_joint_actions: bool = True
     default_prompt: str | None = None
-    adapt_to_pi: bool = True
+    # IMPORTANT: default False for RoboTwin. The `adapt_to_pi` path applies
+    # Trossen-Aloha-specific kinematics (joint flip mask and a gripper
+    # linear->angular transform with Trossen linkage constants
+    # arm_length=0.036, horn_radius=0.022, range [0.01844, 0.0580]).
+    # RoboTwin's aloha-agilex uses arx5 arms with gripper_scale=[-0.01, 0.045],
+    # so the Trossen transform collapses both open and closed gripper positions
+    # to ~-1 in pi0 angular space, destroying the gripper signal. Setting this
+    # True yielded 0% success on handover_block. Leave False unless you know
+    # the data is from real Trossen hardware.
+    adapt_to_pi: bool = False
     include_cam_extrinsics: bool = False
     pi3x_targets_root: str | None = None
     gt_point_targets_root: str | None = None
