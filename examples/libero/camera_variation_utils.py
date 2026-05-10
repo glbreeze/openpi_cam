@@ -2,14 +2,36 @@ import json
 import math
 import os
 import pathlib
+import sys
 import xml.etree.ElementTree as ET
 
-import numpy as np
-
 from libero.libero.utils import utils as libero_utils
+import numpy as np
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 LIBERO_ASSETS_ROOT = REPO_ROOT / "third_party" / "libero" / "libero" / "libero" / "assets"
+
+LIBERO_CAMERA_SCRIPTS_DIR = REPO_ROOT.parent / "LIBERO-Camera" / "scripts"
+
+
+def _import_camera_visibility():
+    candidates = []
+    env_override = os.environ.get("LIBERO_CAMERA_SCRIPTS_DIR")
+    if env_override:
+        candidates.append(pathlib.Path(env_override))
+    candidates.append(LIBERO_CAMERA_SCRIPTS_DIR)
+    for cand in candidates:
+        if cand.exists() and (cand / "camera_visibility.py").exists():
+            cand_str = str(cand)
+            if cand_str not in sys.path:
+                sys.path.insert(0, cand_str)
+            import camera_visibility
+
+            return camera_visibility
+    raise ImportError(
+        "Cannot locate LIBERO-Camera/scripts/camera_visibility.py. "
+        "Set LIBERO_CAMERA_SCRIPTS_DIR to its directory."
+    )
 
 
 def _as_text(value):
@@ -122,7 +144,7 @@ def _parse_schedule(spec, count, name):
 def load_camera_variation_config(path: str | None) -> dict | None:
     if not path:
         return None
-    with open(path, "r") as f:
+    with open(path) as f:
         cfg = json.load(f)
     if not isinstance(cfg, dict):
         raise ValueError("camera variation config must be a JSON object")
@@ -315,10 +337,29 @@ def build_camera_variation_specs(
     seed: int,
     include_original: bool,
     target_camera: str = "agentview",
+    validate_visibility: bool = False,
 ):
     cfg = load_camera_variation_config(config_path)
     effective_count = get_effective_count(count, cfg)
     base_pose = extract_camera_pose_from_xml(model_xml, target_camera)
+
+    validator = None
+    if validate_visibility and effective_count > 0 and cfg is not None:
+        camera_visibility = _import_camera_visibility()
+        # Force visibility checks even if the JSON has them disabled, since the
+        # caller explicitly opted in via validate_visibility=True.
+        cfg = dict(cfg)
+        vc = dict(cfg.get("visibility_constraints") or {})
+        vc["enabled"] = True
+        cfg["visibility_constraints"] = vc
+        validator = camera_visibility.make_pose_validator(
+            env=env,
+            model_xml=model_xml,
+            states=[initial_state],
+            reset_fn=reset_env_with_camera_pose,
+            cfg=cfg,
+            camera_name=target_camera,
+        )
 
     specs = []
     if include_original:
@@ -353,6 +394,13 @@ def build_camera_variation_specs(
     for pose in poses:
         pos = np.asarray(pose["applied_pos"], dtype=np.float64)
         quat = np.asarray(pose["applied_quat"], dtype=np.float64)
+        visible_ok = True
+        if validator is not None:
+            try:
+                visible_ok = bool(validator(pose))
+            except Exception as exc:
+                print(f"[camera-variation] visibility check raised {exc!r} for variation_id={pose['variation_id']}; treating as invisible")
+                visible_ok = False
         specs.append(
             {
                 "label": f"camvar_{int(pose['variation_id']):02d}",
@@ -367,6 +415,7 @@ def build_camera_variation_specs(
                 "quat": quat.tolist(),
                 "delta_pos": np.asarray(pose["delta_pos"], dtype=np.float64).tolist(),
                 "delta_rpy_deg": np.asarray(pose["delta_rpy_deg"], dtype=np.float64).tolist(),
+                "visibility_passed": visible_ok,
             }
         )
     return specs

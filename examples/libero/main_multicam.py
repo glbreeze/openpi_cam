@@ -77,6 +77,7 @@ class Args:
     camera_variation_seed: int = 0
     camera_variation_include_original: bool = True
     camera_variation_target_camera: str = "agentview"
+    camera_variation_validate_visibility: bool = False
 
     video_out_path: str = "data/libero/videos"
     save_videos: bool = False
@@ -136,6 +137,7 @@ def eval_libero_multicam(args: Args) -> None:
             seed=args.camera_variation_seed,
             include_original=args.camera_variation_include_original,
             target_camera=args.camera_variation_target_camera,
+            validate_visibility=args.camera_variation_validate_visibility,
         )
 
         logging.info("Task %s camera variants: %s", task_id, [spec["label"] for spec in camera_specs])
@@ -145,6 +147,26 @@ def eval_libero_multicam(args: Args) -> None:
             task_successes = 0
             camera_label = camera_spec["label"]
             cameras_dict = camera_spec["cameras_dict"]
+
+            if not camera_spec.get("visibility_passed", True):
+                logging.info("Task %s camera %s skipped (visibility check failed)", task_id, camera_label)
+                records.append(
+                    {
+                        "task_id": task_id,
+                        "task_description": task_description,
+                        "camera_label": camera_label,
+                        "variation_id": camera_spec["variation_id"],
+                        "episodes": 0,
+                        "successes": 0,
+                        "success_rate": None,
+                        "camera_pos": camera_spec["pos"],
+                        "camera_quat": camera_spec["quat"],
+                        "delta_pos": camera_spec["delta_pos"],
+                        "delta_rpy_deg": camera_spec["delta_rpy_deg"],
+                        "skipped_reason": "visibility_failed",
+                    }
+                )
+                continue
 
             for episode_idx in tqdm.tqdm(range(args.num_trials_per_task)):
                 logging.info("\nTask: %s", task_description)
@@ -189,6 +211,8 @@ def eval_libero_multicam(args: Args) -> None:
                                 ),
                                 "observation/agent_extrinsic": _get_camera_extrinsic(env, "agentview"),
                                 "observation/wrist_extrinsic": _get_camera_extrinsic(env, "robot0_eye_in_hand"),
+                                "observation/agent_intrinsic": _get_camera_intrinsic(env, "agentview", LIBERO_ENV_RESOLUTION),
+                                "observation/wrist_intrinsic": _get_camera_intrinsic(env, "robot0_eye_in_hand", LIBERO_ENV_RESOLUTION),
                                 "prompt": str(task_description),
                             }
                             action_chunk = client.infer(element)["actions"]
@@ -295,6 +319,19 @@ def _get_camera_extrinsic(env, camera_name):
     extrinsic[:3, :3] = cam_rot
     extrinsic[:3, 3] = cam_pos
     return extrinsic
+
+
+def _get_camera_intrinsic(env, camera_name, image_size):
+    cam_id = env.sim.model.camera_name2id(camera_name)
+    fovy_rad = math.radians(float(env.sim.model.cam_fovy[cam_id]))
+    fy = (image_size / 2.0) / math.tan(fovy_rad / 2.0)
+    fx = fy
+    cx = image_size / 2.0
+    cy = image_size / 2.0
+    return np.array(
+        [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
 
 
 def _quat2axisangle(quat):

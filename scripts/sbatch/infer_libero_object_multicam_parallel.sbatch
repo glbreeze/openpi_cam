@@ -128,6 +128,7 @@ CAMERA_VARIATION_COUNT=${CAMERA_VARIATION_COUNT:-4}
 CAMERA_VARIATION_SEED=${CAMERA_VARIATION_SEED:-0}
 CAMERA_VARIATION_INCLUDE_ORIGINAL=${CAMERA_VARIATION_INCLUDE_ORIGINAL:-true}
 CAMERA_VARIATION_TARGET_CAMERA=${CAMERA_VARIATION_TARGET_CAMERA:-agentview}
+CAMERA_VARIATION_VALIDATE_VISIBILITY=${CAMERA_VARIATION_VALIDATE_VISIBILITY:-false}
 
 PORT_BASE=${PORT_BASE:-19200}
 PORT=${PORT:-${PORT_BASE}}
@@ -292,6 +293,26 @@ case "${CAMERA_VARIATION_INCLUDE_ORIGINAL}" in
     ;;
 esac
 
+camera_validate_flag=()
+case "${CAMERA_VARIATION_VALIDATE_VISIBILITY}" in
+  true|TRUE|True|1|yes|YES|Yes)
+    camera_validate_flag=(--args.camera-variation-validate-visibility)
+    ;;
+  false|FALSE|False|0|no|NO|No)
+    camera_validate_flag=(--args.no-camera-variation-validate-visibility)
+    ;;
+  *)
+    echo "Unsupported CAMERA_VARIATION_VALIDATE_VISIBILITY value: ${CAMERA_VARIATION_VALIDATE_VISIBILITY}" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -z "${LIBERO_CAMERA_SCRIPTS_DIR:-}" ]]; then
+  if [[ -d "${GEO_ROOT}/LIBERO-Camera/scripts" ]]; then
+    export LIBERO_CAMERA_SCRIPTS_DIR="${GEO_ROOT}/LIBERO-Camera/scripts"
+  fi
+fi
+
 CLIENT_PIDS=()
 client_rc=0
 for client_idx in $(seq 0 $((NUM_PARALLEL_CLIENTS - 1))); do
@@ -323,6 +344,7 @@ for client_idx in $(seq 0 $((NUM_PARALLEL_CLIENTS - 1))); do
     --args.camera-variation-count "${CAMERA_VARIATION_COUNT}" \
     --args.camera-variation-seed "${CAMERA_VARIATION_SEED}" \
     "${camera_include_original_flag[@]}" \
+    "${camera_validate_flag[@]}" \
     --args.camera-variation-target-camera "${CAMERA_VARIATION_TARGET_CAMERA}" \
     --args.video-out-path "${client_video_out}" \
     --args.summary-out-path "${shard_summary}" &
