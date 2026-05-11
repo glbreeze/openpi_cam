@@ -8,14 +8,14 @@ Output cache layout matches `MixedPointTargetLoader` / `DualPointTargetLoader`:
         log_z : (T, R, R, 1)   log depth (meters)
         conf  : (T, R, R, 1)   conf logits (pre-sigmoid; ±10 from depth validity)
 
-Preprocessing follows openpi's image pipeline:
+Preprocessing follows the fixed RoboTwin/Sapien image convention:
   1. Read 480x640 (or whatever the raw H,W is) Sapien depth (mm float64) +
      intrinsic_cv (3,3) + extrinsic_cv (4,4) per frame from the raw RoboTwin
      HDF5 produced by `bash collect_data.sh ... <task_config_with_depth>`.
   2. Convert depth from mm -> m (Sapien's `get_depth()` writes `(-z) * 1000`).
-  3. Apply `[::-1, ::-1]` flip on depth (matches `_preprocess_image`).
+  3. Keep depth in natural Sapien/OpenCV y-down orientation; no spatial flip.
   4. Resize 480x640 -> target_resolution x target_resolution (nearest, square).
-  5. Scale K by target_res / src_hw and apply `fx -> -fx` (openpi flip).
+  5. Scale K by target_res / src_hw; keep positive fx/fy.
   6. Project pixel grid through the intrinsic to (x_dir, y_dir, z), pool to
      `output_resolution` if requested, write fp16 npz.
 

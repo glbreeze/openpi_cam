@@ -12,17 +12,10 @@ runs the Pi3X teacher and dumps per-frame patch-level targets that the openpi
 
 To keep teacher patch features pixel-aligned with openpi's SigLIP grid, the cache
 feeds Pi3X the SAME image and K convention the model sees at training time:
-  1. Decode 256x256 uint8 frames from parquet. The conversion script
-     (`convert_libero_hdf5_to_lerobot._preprocess_image`) already applied the
-     `[::-1, ::-1]` 180-degree flip before storing the image, so the parquet
-     bytes are already in the model-input orientation. Do NOT flip again.
-  2. Bilinear-resize 256 -> 224 (square->square, no padding).
-  3. Scale K by 224/256 and apply the openpi `fx -> -fx` flip
-     (`_adjust_K_for_openpi_image_flip`). The `fx` sign flip absorbs the
-     `fliplr` half of the legacy 180-degree rotation that is still baked into
-     the stored image; the `flipud` half is absorbed in the matching extrinsic
-     transform (`_mujoco_to_opencv_extrinsic`), which the cache does not need
-     since it operates in the local camera frame.
+  1. Decode uint8 frames from parquet in their stored orientation.
+  2. Bilinear-resize to 224 (square->square, no padding).
+  3. Scale K by the same resize factor. Re-generated RoboTwin/Sapien caches keep
+     images in natural OpenCV y-down orientation and keep fx/fy positive.
 
 We pool Pi3X's full-res xy / log_z / conf with a 14x14 / stride-14 avg pool, which
 exactly matches the 16x16 SigLIP patch grid (224 / 14 = 16).
@@ -121,10 +114,9 @@ def _adjust_K_openpi(K: np.ndarray, scale: float) -> np.ndarray:
 def _prep_images(uint8_imgs: np.ndarray, target_hw: int) -> torch.Tensor:
     """uint8 (T, H, W, 3) -> float [0,1] (T, 3, target_hw, target_hw), resized.
 
-    The parquet image already contains the conversion script's 180-degree
-    flip, so we feed it to Pi3X as-is (matching what the model sees at training
-    and inference time). The matching `fx -> -fx` half of the flip lives in
-    `_adjust_K_openpi`.
+    Feed parquet images to Pi3X as-is, then resize if needed. For fixed
+    RoboTwin/Sapien caches this means natural OpenCV y-down orientation with
+    positive fx/fy.
     """
     chw = torch.from_numpy(np.ascontiguousarray(uint8_imgs)).permute(0, 3, 1, 2).contiguous().float() / 255.0
     if chw.shape[-1] != target_hw or chw.shape[-2] != target_hw:

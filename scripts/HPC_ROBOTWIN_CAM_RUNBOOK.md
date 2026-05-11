@@ -120,7 +120,7 @@ Resulting LeRobot v3 features:
 | `observation.cam_high_extrinsic` | (4, 4) | OpenCV-frame `T_wc` |
 | `observation.cam_left_wrist_extrinsic` | (4, 4) | |
 | `observation.cam_right_wrist_extrinsic` | (4, 4) | |
-| `observation.cam_high_intrinsic` | (3, 3) | with `fx -> -fx` flip |
+| `observation.cam_high_intrinsic` | (3, 3) | natural Sapien/OpenCV K, positive `fx/fy` |
 | `observation.cam_left_wrist_intrinsic` | (3, 3) | |
 | `observation.cam_right_wrist_intrinsic` | (3, 3) | |
 
@@ -162,7 +162,7 @@ python scripts/cache_robotwin_gt_point_targets.py \
 
 Reads `/observation/<cam>/depth` + `intrinsic_cv` + `extrinsic_cv` from each raw
 RoboTwin HDF5 episode; converts the 480×640 Sapien depth into the same
-flipped/cropped, 224×224 OpenCV-camera-frame point map that Pi3X emits, and
+natural-orientation, 224×224 OpenCV-camera-frame point map that Pi3X emits, and
 writes the same `(xy, log_z, conf)` fp16 layout.
 
 ## 7. Phase 5 — Stage 1 (5k steps, freeze backbone)

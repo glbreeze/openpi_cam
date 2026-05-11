@@ -153,8 +153,8 @@ class RobotwinCamInputs(transforms.DataTransformFn):
         cam_left_wrist -> wrist_*
         cam_right_wrist-> right_wrist_*
     Extrinsics are stored as camera-to-world (T_wc) in OpenCV camera frame by the
-    converter, so no MuJoCo-style frame fix is needed; only the openpi `fx -> -fx`
-    flip is applied to each K.
+    converter, so no MuJoCo-style frame fix is needed. Intrinsics are passed
+    through in natural Sapien/OpenCV orientation with positive fx/fy.
     """
 
     model_type: _model.ModelType

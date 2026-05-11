@@ -1,11 +1,9 @@
-"""In-place 180-degree flip of images inside a converted RoboTwin LeRobot v2.1
-dataset, to bring it onto the openpi cam-aware convention (LIBERO-style flipped
-parquet image + parquet K_orig + RobotwinCamInputs applies fx->-fx at training).
+"""LEGACY ONLY: in-place 180-degree flip of images inside RoboTwin parquet data.
 
-This is a one-shot fix for datasets that were converted with the original
-(buggy) convert_robotwin_cam_to_lerobot.py — newer conversions already include
-the flip in `_resize_image`. Only the image columns are touched; K and
-extrinsic columns are not modified.
+Do not use this for the fixed RoboTwin/Sapien pipeline. Current conversions keep
+images in natural OpenCV y-down orientation and keep K positive. Running this on
+fixed data will reintroduce the old orientation bug. This remains only for
+forensics on legacy datasets/checkpoints.
 """
 
 from __future__ import annotations
@@ -55,7 +53,17 @@ def flip_parquet(path: Path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", required=True, help="LeRobot repo dir, e.g. .../robotwin/<task>_demo_clean_camaware_50")
+    parser.add_argument(
+        "--allow-legacy-robotwin-flip",
+        action="store_true",
+        help="Required guard: this corrupts fixed natural-orientation RoboTwin datasets.",
+    )
     args = parser.parse_args()
+    if not args.allow_legacy_robotwin_flip:
+        raise SystemExit(
+            "Refusing to flip RoboTwin parquet images. This is a legacy-only tool; "
+            "pass --allow-legacy-robotwin-flip only when intentionally inspecting old broken data."
+        )
     repo_root = Path(args.repo_root).expanduser().resolve()
     parquets = sorted(repo_root.rglob("episode_*.parquet"))
     if not parquets:
