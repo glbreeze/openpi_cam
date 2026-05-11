@@ -53,16 +53,17 @@ DEFAULT_CAM_MAP = {
 
 
 def _adjust_and_scale_k(K: np.ndarray, src_hw: tuple[int, int], target_hw: int) -> np.ndarray:
-    """Scale a Sapien-OpenCV K to a target square resolution and apply openpi `fx -> -fx`.
+    """Scale a Sapien-OpenCV K to a target square resolution.
 
-    Sapien depth is rendered at `src_hw = (H, W)` which is generally non-square
-    (e.g. 480x640). We square-resize to `target_hw` and scale K accordingly.
+    Sapien depth is rendered at `src_hw = (H, W)` (e.g. 240x320) — we square-resize
+    to `target_hw` and scale K accordingly. **No** fx-negation: the converter and
+    eval client both keep images in natural Sapien (OpenCV y-down) orientation.
     """
     src_h, src_w = src_hw
     sx = float(target_hw) / float(src_w)
     sy = float(target_hw) / float(src_h)
     out = np.asarray(K, dtype=np.float32).copy()
-    out[0, 0] = -out[0, 0] * sx
+    out[0, 0] = out[0, 0] * sx
     out[0, 2] = out[0, 2] * sx
     out[1, 1] = out[1, 1] * sy
     out[1, 2] = out[1, 2] * sy
@@ -132,7 +133,8 @@ def _process_episode_cam(
     xy_list, log_z_list, conf_list = [], [], []
     for depth_mm in depth_seq:
         depth_m = depth_mm.astype(np.float32) / 1000.0  # Sapien `get_depth` => mm
-        depth_m = depth_m[::-1, ::-1].copy()
+        # No [::-1, ::-1] flip: depth stays in natural Sapien (y-down) orientation
+        # to match the converter's parquet image and the eval client's input.
         depth_m = _resize_depth(depth_m, target_resolution)
         xy, log_z, conf = _depth_to_targets(depth_m, K_scaled)
         xy, log_z, conf = _pool_targets(xy, log_z, conf, output_resolution)

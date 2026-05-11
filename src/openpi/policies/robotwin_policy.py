@@ -58,7 +58,20 @@ class RobotwinInputs(transforms.DataTransformFn):
 
     def __call__(self, data: dict) -> dict:
         if "images" in data:
-            source_images = data["images"]
+            raw_images = data["images"]
+            # Eval clients use multiple naming conventions: RoboTwin native
+            # (head_camera / left_camera / right_camera) and pi0 / aloha
+            # (cam_high / cam_left_wrist / cam_right_wrist). Accept either.
+            source_images = {
+                "head_camera": raw_images.get("head_camera", raw_images.get("cam_high")),
+                "left_camera": raw_images.get("left_camera", raw_images.get("cam_left_wrist")),
+                "right_camera": raw_images.get("right_camera", raw_images.get("cam_right_wrist")),
+            }
+            missing = [k for k, v in source_images.items() if v is None]
+            if missing:
+                raise KeyError(
+                    f"RobotwinInputs: 'images' dict missing for {missing}; got keys {list(raw_images)}"
+                )
             state = np.asarray(_get_first(data, "state", "observation.state", "observation/state"), dtype=np.float32)
             actions = _maybe_get_first(data, "actions", "action")
             prompt = _maybe_get_first(data, "prompt", "task")
@@ -115,15 +128,14 @@ class RobotwinOutputs(transforms.DataTransformFn):
 
 
 def _adjust_K_for_openpi_image_flip(K) -> np.ndarray:
-    """`fx -> -fx` flip; mirrors `libero_policy._adjust_K_for_openpi_image_flip`.
+    """Identity pass-through for RoboTwin/Sapien.
 
-    openpi's `_preprocess_image` runs `[::-1, ::-1]` on every input. Negating the
-    intrinsic's fx absorbs the horizontal flip; cy/fy stay unchanged because cy=H/2
-    and the y-flip is consistent with positive fy in the OpenCV pinhole model.
+    Sapien renders in OpenCV (y-down) convention natively; the converter and
+    eval client both pass images through without flipping, so K stays the
+    natural OpenCV K with positive fx/fy. Kept as a named identity function
+    in case we add per-cam K adjustments later.
     """
-    K_out = np.asarray(K, dtype=np.float32).copy()
-    K_out[..., 0, 0] = -K_out[..., 0, 0]
-    return K_out
+    return np.asarray(K, dtype=np.float32).copy()
 
 
 @dataclasses.dataclass(frozen=True)

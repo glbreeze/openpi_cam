@@ -97,9 +97,20 @@ def _decode_image_field(value) -> np.ndarray:
 
 
 def _adjust_K_openpi(K: np.ndarray, scale: float) -> np.ndarray:
-    """openpi's `_adjust_K_for_openpi_image_flip` (fx -> -fx) followed by isotropic K scaling."""
+    """openpi's K adjustment for the cache.
+
+    Historically applied `fx -> -fx` to absorb a `[::-1, ::-1]` image flip
+    introduced by LIBERO's converter. The current convention (matching the
+    RoboTwin Sapien eval client and the LIBERO recipe with the fixed converter)
+    is **no flip**: image and K stay in natural OpenCV (y-down, fx-positive)
+    orientation everywhere. We only apply the optional isotropic resize scale.
+
+    NOTE: legacy LIBERO Pi3X caches are tagged with `pi3x_cache_legacy_flip=True`
+    in their consuming TrainConfig; the loader applies a 180-deg flip at load
+    time to bring them onto the new orientation. Re-generated caches use this
+    pass-through path and need the flag set to False.
+    """
     K_out = np.asarray(K, dtype=np.float32).copy()
-    K_out[0, 0] = -K_out[0, 0]
     K_out[0, 0] *= scale
     K_out[0, 2] *= scale
     K_out[1, 1] *= scale
