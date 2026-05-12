@@ -350,7 +350,7 @@ run_training_command() {
   echo "trainable prefixes: ${OPENPI_TRAINABLE_PREFIXES:-<all>}"
   echo "lr multipliers: ${OPENPI_LR_MULTIPLIERS:-<default>}"
 
-  srun --export=ALL --ntasks=1 --ntasks-per-node=1 --cpus-per-task="${SLURM_CPUS_PER_TASK}" --kill-on-bad-exit=1 \
+  srun --export=ALL --ntasks=1 --ntasks-per-node=1 --cpus-per-task="${SLURM_CPUS_PER_TASK}" --cpu-bind=none --kill-on-bad-exit=1 \
     python -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node="${NUM_GPUS}" \
       scripts/train_pytorch.py "${phase_args[@]}"
 

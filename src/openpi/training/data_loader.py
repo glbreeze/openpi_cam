@@ -5,10 +5,12 @@ import os
 import typing
 from typing import Literal, Protocol, SupportsIndex, TypeVar
 
+import datasets as hf_datasets
 import jax
 import jax.numpy as jnp
 import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import numpy as np
+import pandas as pd
 import torch
 
 import openpi.models.model as _model
@@ -127,6 +129,31 @@ class FakeDataset(Dataset):
         return self._num_samples
 
 
+class LocalLeRobotDataset(lerobot_dataset.LeRobotDataset):
+    """LeRobotDataset variant that bypasses legacy parquet HF metadata parsing.
+
+    Some locally generated LeRobot datasets embed Hugging Face parquet metadata
+    with legacy feature tags like `_type: "List"`, which newer `datasets`
+    versions reject. Pandas can still read those files correctly, so we rebuild
+    the HF dataset from pandas DataFrames and keep the rest of the LeRobot video
+    loading path unchanged.
+    """
+
+    def load_hf_dataset(self) -> hf_datasets.Dataset:
+        if self.episodes is None:
+            files = sorted((self.root / "data").glob("chunk-*/episode_*.parquet"))
+        else:
+            files = [self.root / self.meta.get_data_file_path(ep_idx) for ep_idx in self.episodes]
+
+        if not files:
+            raise FileNotFoundError(f"No parquet episode files found under {self.root / 'data'}")
+
+        frames = [pd.read_parquet(path) for path in files]
+        hf_dataset = hf_datasets.Dataset.from_pandas(pd.concat(frames, ignore_index=True), preserve_index=False)
+        hf_dataset.set_transform(lerobot_dataset.hf_transform_to_torch)
+        return hf_dataset
+
+
 def create_torch_dataset(
     data_config: _config.DataConfig, action_horizon: int, model_config: _model.BaseModelConfig
 ) -> Dataset:
@@ -137,7 +164,8 @@ def create_torch_dataset(
     if repo_id == "fake":
         return FakeDataset(model_config, num_samples=1024)
 
-    dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
+    dataset_root = data_config.local_dataset_root
+    dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id, root=dataset_root)
 
     episodes = None
     if data_config.task_indices:
@@ -160,9 +188,12 @@ def create_torch_dataset(
             len(episodes),
         )
 
-    dataset = lerobot_dataset.LeRobotDataset(
+    dataset_cls = LocalLeRobotDataset if dataset_root is not None else lerobot_dataset.LeRobotDataset
+    dataset = dataset_cls(
         data_config.repo_id,
+        root=dataset_root,
         episodes=episodes,
+        video_backend=data_config.video_backend,
         delta_timestamps={
             key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
         },

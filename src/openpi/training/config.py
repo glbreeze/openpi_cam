@@ -23,6 +23,7 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.real_robot_policy as real_robot_policy
 import openpi.policies.robotwin_policy as robotwin_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
@@ -81,6 +82,12 @@ class AssetsConfig:
 class DataConfig:
     # LeRobot repo id. If None, fake data will be created.
     repo_id: str | None = None
+    # Optional local root for a LeRobot dataset. When set, the loader reads the
+    # dataset directly from disk instead of from `HF_LEROBOT_HOME / repo_id`.
+    local_dataset_root: str | None = None
+    # Optional LeRobot video decoder backend override. Useful when the default
+    # `torchcodec` backend is unavailable in the runtime environment.
+    video_backend: str | None = None
     # Directory within the assets directory containing the data assets.
     asset_id: str | None = None
     # Contains precomputed normalization stats. If None, normalization will not be performed.
@@ -422,6 +429,61 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotRealRobotUR5DataConfig(DataConfigFactory):
+    # Absolute UR5 joint targets should be converted to deltas while keeping the
+    # gripper absolute.
+    use_delta_joint_actions: bool = True
+    # If provided, inject this prompt when dataset/inference inputs do not
+    # already contain one.
+    default_prompt: str | None = None
+    # Local on-disk root of the LeRobot-format dataset.
+    local_dataset_root: str = "/scratch/yz11445/real_robot_data/ur5_lab_test_tube_camera_shifts"
+    # Which third-person camera stream to use as the baseline "base" image.
+    base_camera_key: str = "observation.images.context_top_rgb"
+    # Which wrist camera stream to use as the baseline wrist image.
+    wrist_camera_key: str = "observation.images.wrist_right_rgb"
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "observation/base_image": self.base_camera_key,
+                        "observation/wrist_image": self.wrist_camera_key,
+                        "observation/state": "observation.state",
+                        "actions": "action",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        data_transforms = _transforms.Group(
+            inputs=[real_robot_policy.RealRobotUR5Inputs(model_type=model_config.model_type)],
+            outputs=[real_robot_policy.RealRobotUR5Outputs()],
+        )
+        if self.use_delta_joint_actions:
+            delta_action_mask = _transforms.make_bool_mask(6, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_action_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            )
+
+        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            local_dataset_root=self.local_dataset_root,
+            video_backend="pyav",
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            action_sequence_keys=("action",),
         )
 
 
@@ -1155,6 +1217,30 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
             include_cam_extrinsics=False,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi0_ur5_real_robot_pytorch_baseline",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(enabled=False),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotRealRobotUR5DataConfig(
+            repo_id="ur5_lab_test_tube_camera_shifts",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_ur5_real_robot"),
+                asset_id="ur5_lab_test_tube_camera_shifts",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
