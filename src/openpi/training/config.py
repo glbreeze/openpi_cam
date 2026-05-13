@@ -368,6 +368,21 @@ class LeRobotRobotwinCamDataConfig(DataConfigFactory):
     # cache_pi3x_targets._prep_images orientation. Set True only if you
     # somehow re-cache against an old/legacy script.
     pi3x_cache_legacy_flip: bool = False
+    # Cam → cache-subdir mapping for the point-target loaders. The left tuple
+    # entry is the model-side cam key (matches `embed_image`'s cam_keys, i.e.
+    # `name.split("_0_rgb")[0]`); the right entry is the on-disk subdirectory
+    # name under {pi3x,gt_point}_targets_224/<repo_id>/. RoboTwin has three
+    # real cameras (head + L/R wrist), so we supervise all three by default
+    # — distinct from LIBERO where right_wrist_0_rgb is a zero-padded null
+    # cam and is correctly excluded from the loader. The cache must contain
+    # subdirs matching this list (build with `cache_pi3x_targets.py --cam-spec
+    # agent:cam_high:cam_high_intrinsic,wrist:cam_left_wrist:cam_left_wrist_intrinsic,
+    # right_wrist:cam_right_wrist:cam_right_wrist_intrinsic`).
+    point_target_cams: tuple[tuple[str, str], ...] = (
+        ("base", "agent"),
+        ("left_wrist", "wrist"),
+        ("right_wrist", "right_wrist"),
+    )
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -400,6 +415,7 @@ class LeRobotRobotwinCamDataConfig(DataConfigFactory):
                         gt_root=self.gt_point_targets_root,
                         gt_ratio=self.point_target_gt_ratio,
                         seed=self.point_target_mix_seed,
+                        cam_to_npz_subdir=self.point_target_cams,
                         pi3x_legacy_flip=self.pi3x_cache_legacy_flip,
                     )
                 )
@@ -409,6 +425,7 @@ class LeRobotRobotwinCamDataConfig(DataConfigFactory):
                         pi3x_root=self.pi3x_targets_root,
                         gt_root=self.gt_point_targets_root,
                         gt_weight=self.point_target_gt_ratio,
+                        cam_to_npz_subdir=self.point_target_cams,
                         pi3x_legacy_flip=self.pi3x_cache_legacy_flip,
                     )
                 )
@@ -418,6 +435,7 @@ class LeRobotRobotwinCamDataConfig(DataConfigFactory):
             repack_inputs.append(
                 libero_policy.Pi3xLiberoTargetLoader(
                     root=self.pi3x_targets_root,
+                    cam_to_npz_subdir=self.point_target_cams,
                     pi3x_legacy_flip=self.pi3x_cache_legacy_flip,
                 )
             )
@@ -428,6 +446,7 @@ class LeRobotRobotwinCamDataConfig(DataConfigFactory):
                     gt_root=self.gt_point_targets_root,
                     gt_ratio=1.0,
                     seed=self.point_target_mix_seed,
+                    cam_to_npz_subdir=self.point_target_cams,
                 )
             )
         repack_transform = _transforms.Group(inputs=repack_inputs)
