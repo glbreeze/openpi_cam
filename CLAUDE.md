@@ -41,3 +41,4 @@ The code under `src/openpi/` is organized by concern, not by model:
 - The `debug` config is the fastest way to smoke-test a code path end-to-end.
 - Run `pre-commit install` once; CI expects `ruff check .` and `ruff format .` to pass.
 - `third_party/`, `docker/`, and `src/openpi/models_pytorch/transformers_replace/*` are excluded from ruff.
+- One-off / debug / analysis / visualization scripts live in `scripts/debug/`, not `scripts/`. Anything that is run ad-hoc (checkpoint surgery, dataset comparison, plotting, cache validation, eval debugging, one-time data patches) belongs there. Only scripts that are part of a documented pipeline (training, serving, norm stats, dataset conversion, target caching) stay at the top level of `scripts/`.
