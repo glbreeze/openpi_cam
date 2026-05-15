@@ -1689,6 +1689,32 @@ _CONFIGS = [
     # augs are off, and camera extrinsics are NOT passed through. Use this as
     # the A/B baseline when ablating the new architecture against Stage 2.
     TrainConfig(
+        name="pi0_libero_4suite_pytorch_baseline",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(enabled=False),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_cam_v2",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_cam_v2",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=False,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
         name="pi0_libero_object_pytorch_baseline",
         model=pi0_config.Pi0Config(
             pose_enc_type="null",
