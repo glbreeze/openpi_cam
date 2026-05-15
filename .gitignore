@@ -1,6 +1,7 @@
 # Data directories.
 assets/*
 !assets/pi3x_init/
+cache/
 checkpoints/
 data/
 wandb/
@@ -67,6 +68,7 @@ cover/
 
 # Django stuff:
 *.log
+MUJOCO_LOG.TXT
 local_settings.py
 db.sqlite3
 db.sqlite3-journal

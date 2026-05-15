@@ -61,7 +61,27 @@ def create_trained_policy(
         # that the policy is using the same normalization stats as the original training process.
         if data_config.asset_id is None:
             raise ValueError("Asset id is required to load norm stats.")
-        norm_stats = _checkpoints.load_norm_stats(checkpoint_dir / "assets", data_config.asset_id)
+        asset_id = os.environ.get("OPENPI_POLICY_ASSET_ID", data_config.asset_id)
+        checkpoint_assets_dir = checkpoint_dir / "assets"
+        if not (checkpoint_assets_dir / asset_id).exists():
+            candidates = [
+                path.relative_to(checkpoint_assets_dir).as_posix()
+                for path in checkpoint_assets_dir.glob("**/norm_stats.json")
+            ]
+            candidates = [str(pathlib.Path(candidate).parent) for candidate in candidates]
+            if len(candidates) == 1:
+                logging.info(
+                    "Using checkpoint asset id %s instead of config asset id %s",
+                    candidates[0],
+                    data_config.asset_id,
+                )
+                asset_id = candidates[0]
+            else:
+                raise FileNotFoundError(
+                    f"Could not find norm stats for asset id {asset_id!r} under {checkpoint_assets_dir}. "
+                    f"Set OPENPI_POLICY_ASSET_ID explicitly. Candidates: {candidates}"
+                )
+        norm_stats = _checkpoints.load_norm_stats(checkpoint_assets_dir, asset_id)
 
     # Determine the device to use for PyTorch models
     if is_pytorch and pytorch_device is None:

@@ -26,7 +26,7 @@ EXP_NAME=${EXP_NAME:-stage2_${TASK}_adaptfix}
 CHECKPOINT_STEP=${CHECKPOINT_STEP:-30000}
 CHECKPOINT_DIR=${CHECKPOINT_DIR:-${REPO_ROOT}/checkpoints/${CONFIG_NAME}/${EXP_NAME}/${CHECKPOINT_STEP}}
 ASSET_ID=${ASSET_ID:-robotwin/${TASK}_${ASSET_TASK_CONFIG}_50}
-PORT=${PORT:-8000}
+PORT=${PORT:-$((18000 + (${SLURM_JOB_ID:-0} % 10000)))}
 PI0_STEP=${PI0_STEP:-50}
 SEED=${SEED:-0}
 INSTRUCTION_TYPE=${INSTRUCTION_TYPE:-unseen}
@@ -37,7 +37,7 @@ export HOME=${JOB_TMP_ROOT}/home
 export XDG_CACHE_HOME=${JOB_TMP_ROOT}/xdg
 export HF_HOME=${JOB_TMP_ROOT}/huggingface
 export TORCH_HOME=${JOB_TMP_ROOT}/torch
-export TORCH_EXTENSIONS_DIR=${TORCH_EXTENSIONS_DIR:-${REPO_ROOT}/cache/robotwin_torch_extensions}
+export TORCH_EXTENSIONS_DIR=${TORCH_EXTENSIONS_DIR:-${JOB_TMP_ROOT}/torch_extensions}
 export PIP_CACHE_DIR=${JOB_TMP_ROOT}/pip
 export MPLCONFIGDIR=${JOB_TMP_ROOT}/matplotlib
 export CUDA_HOME=${CUDA_HOME:-/scratch/yp2841/tmp/robotwin2}
@@ -91,7 +91,7 @@ wait_for_server() {
       tail -120 "${server_log}" || true
       return 1
     fi
-    if "${REPO_ROOT}/.venv/bin/python" - "${port}" <<'PY'
+    if grep -q "server listening on .*:${port}" "${server_log}" 2>/dev/null && "${REPO_ROOT}/.venv/bin/python" - "${port}" <<'PY'
 import socket
 import sys
 
