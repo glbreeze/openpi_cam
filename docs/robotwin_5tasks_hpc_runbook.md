@@ -495,7 +495,6 @@ python script/eval_policy.py --task-name ${TASK} \
 ## 10. Reference
 
 - Pipeline + data prep details: [`robotwin_cam_pipeline.md`](robotwin_cam_pipeline.md)
-- Code-change punch list: [`../scripts/ROBOTWIN_CAM_PATCHES.md`](../scripts/ROBOTWIN_CAM_PATCHES.md)
 - LIBERO HPC parallel: [`../scripts/HPC_LIBERO_REGEN_RUNBOOK.md`](../scripts/HPC_LIBERO_REGEN_RUNBOOK.md)
 - Bundle README (transfer source): `/home/asus/Research/CamVLA/robotwin_hpc_bundle/README.md`
 - Globus transfer task: `7634b636-4b56-11f1-ae1a-0afffe4617ab` (succeeded 2026-05-09T04:17:41 UTC, 80.6 GB)

@@ -7,9 +7,7 @@ fgfg cross-view fusion) but on RoboTwin's bimanual 3-camera setup (head, left
 wrist, right wrist) instead of LIBERO's agent + wrist setup.
 
 This is the canonical reference. For HPC-specific tweaks see
-[scripts/HPC_ROBOTWIN_CAM_RUNBOOK.md](../scripts/HPC_ROBOTWIN_CAM_RUNBOOK.md);
-for code-level patch notes see
-[scripts/ROBOTWIN_CAM_PATCHES.md](../scripts/ROBOTWIN_CAM_PATCHES.md).
+[scripts/HPC_ROBOTWIN_CAM_RUNBOOK.md](../scripts/HPC_ROBOTWIN_CAM_RUNBOOK.md).
 
 ---
 
@@ -507,8 +505,6 @@ is reusable.
 ---
 
 ## 12. Code-change punch list (already applied in this branch)
-
-For reference; see [scripts/ROBOTWIN_CAM_PATCHES.md](../scripts/ROBOTWIN_CAM_PATCHES.md).
 
 - `src/openpi/models/model.py` — `Observation.right_wrist_extrinsic / right_wrist_intrinsic` (default None, plumbed through `from_dict` and `preprocess_observation`).
 - `src/openpi/models_pytorch/preprocessing_pytorch.py` — `_IMAGE_TO_CAMERA_FIELDS["right_wrist_0_rgb"]` mapped to the new fields; `updated_extrinsics`/`updated_intrinsics` propagate them.
