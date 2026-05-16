@@ -390,6 +390,12 @@ class LeRobotRobotwinCamDataConfig(DataConfigFactory):
         ("left_wrist", "wrist"),
         ("right_wrist", "right_wrist"),
     )
+    # Model-side cam keys (left entry of `point_target_cams`) for which the Pi3X
+    # teacher is silenced — see `DualPointTargetLoader.pi3x_disabled_cams`. Used
+    # for RoboTwin's `right_wrist` where the gripper occludes the frame and Pi3X
+    # collapses to a depth prior. Only applies when both pi3x_targets_root and
+    # gt_point_targets_root are set with `point_target_mix_mode="dual_loss"`.
+    pi3x_disabled_cams: tuple[str, ...] = ()
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
@@ -434,6 +440,7 @@ class LeRobotRobotwinCamDataConfig(DataConfigFactory):
                         gt_weight=self.point_target_gt_ratio,
                         cam_to_npz_subdir=self.point_target_cams,
                         pi3x_legacy_flip=self.pi3x_cache_legacy_flip,
+                        pi3x_disabled_cams=self.pi3x_disabled_cams,
                     )
                 )
             else:
@@ -2570,6 +2577,10 @@ _CONFIGS = [
             ),
             point_target_gt_ratio=0.5,
             point_target_mix_mode="dual_loss",
+            # Pi3X collapses to a depth prior on the right_wrist view (gripper
+            # occludes the frame, OOD vs. Pi3X's natural-image training data).
+            # Disable Pi3X there — the dual_loss reduces to GT-only for that view.
+            pi3x_disabled_cams=("right_wrist",),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=5_000,
@@ -2631,6 +2642,10 @@ _CONFIGS = [
             ),
             point_target_gt_ratio=0.5,
             point_target_mix_mode="dual_loss",
+            # Pi3X collapses to a depth prior on the right_wrist view (gripper
+            # occludes the frame, OOD vs. Pi3X's natural-image training data).
+            # Disable Pi3X there — the dual_loss reduces to GT-only for that view.
+            pi3x_disabled_cams=("right_wrist",),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
