@@ -2577,10 +2577,6 @@ _CONFIGS = [
             ),
             point_target_gt_ratio=0.5,
             point_target_mix_mode="dual_loss",
-            # Pi3X collapses to a depth prior on the right_wrist view (gripper
-            # occludes the frame, OOD vs. Pi3X's natural-image training data).
-            # Disable Pi3X there — the dual_loss reduces to GT-only for that view.
-            pi3x_disabled_cams=("right_wrist",),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=5_000,
@@ -2642,10 +2638,6 @@ _CONFIGS = [
             ),
             point_target_gt_ratio=0.5,
             point_target_mix_mode="dual_loss",
-            # Pi3X collapses to a depth prior on the right_wrist view (gripper
-            # occludes the frame, OOD vs. Pi3X's natural-image training data).
-            # Disable Pi3X there — the dual_loss reduces to GT-only for that view.
-            pi3x_disabled_cams=("right_wrist",),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
