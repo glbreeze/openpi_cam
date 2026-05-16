@@ -2643,6 +2643,106 @@ _CONFIGS = [
         num_train_steps=30_000,
         batch_size=8,
     ),
+    # GT-only counterpart of `..._stage1_gtdual`: Sapien-GT supervises all three
+    # views (agent, wrist, right_wrist) with no Pi3X teacher. Drops `pi3x_targets_root`
+    # so LeRobotRobotwinCamDataConfig.create routes through the `elif self.gt_point_targets_root
+    # is not None` branch — a MixedPointTargetLoader with gt_ratio=1.0 (effectively GT-only).
+    TrainConfig(
+        name="pi0_robotwin_cam_prope_ray_view_distill_fullres_stage1_gtonly",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fgfg",
+                prope_layer_idx=(0, 1),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=0.1,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=1.0,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=str(
+                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
+            ),
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotRobotwinCamDataConfig(
+            repo_id="robotwin/beat_block_hammer_demo_clean_camaware_50",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id="robotwin/beat_block_hammer_demo_clean_camaware_50",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            include_cam_extrinsics=True,
+            gt_point_targets_root=str(
+                pathlib.Path(
+                    "~/.cache/openpi/gt_point_targets_224/robotwin_beat_block_hammer_demo_clean_camaware_50"
+                ).expanduser()
+            ),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=5_000,
+        batch_size=8,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+        trainable_prefixes=(
+            "cross_view_fusion",
+            "ray_embed",
+            "aux_point_head",
+        ),
+    ),
+    # Stage 2 (30k) GT-only: unfreeze; action_loss_weight=1.0,
+    # aux_point_head.loss_weight=0.05. Warm-start from stage1_gtonly final ckpt
+    # via --pytorch_weight_path.
+    TrainConfig(
+        name="pi0_robotwin_cam_prope_ray_view_distill_fullres_stage2_gtonly",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fgfg",
+                prope_layer_idx=(0, 1),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=0.05,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=str(
+                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
+            ),
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotRobotwinCamDataConfig(
+            repo_id="robotwin/beat_block_hammer_demo_clean_camaware_50",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id="robotwin/beat_block_hammer_demo_clean_camaware_50",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            include_cam_extrinsics=True,
+            gt_point_targets_root=str(
+                pathlib.Path(
+                    "~/.cache/openpi/gt_point_targets_224/robotwin_beat_block_hammer_demo_clean_camaware_50"
+                ).expanduser()
+            ),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+        batch_size=8,
+    ),
     # A/B baseline counterpart: pose_enc=null, ray_enc off, no cross-view fusion,
     # no point head, no extrinsics fed in. Same action schedule as stage 2.
     TrainConfig(
