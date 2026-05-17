@@ -297,7 +297,17 @@ class MixedPointTargetLoader(transforms.DataTransformFn):
 
 @dataclasses.dataclass(frozen=True)
 class DualPointTargetLoader(transforms.DataTransformFn):
-    """Inject separate simulator-GT and Pi3X targets for weighted dual-loss training."""
+    """Inject separate simulator-GT and Pi3X targets for weighted dual-loss training.
+
+    `pi3x_disabled_cams` lists model-side cam keys (the left entry of each
+    `cam_to_npz_subdir` tuple) for which the Pi3X teacher should be silenced —
+    typically because Pi3X is OOD on that view (e.g., RoboTwin's right_wrist
+    where the gripper occupies the frame). For each listed cam, the Pi3X slot
+    in the (V, H, W, C) tensors is overwritten with the GT slot, so the
+    downstream dual-loss `alpha*L(pred,GT) + (1-alpha)*L(pred,Pi3X)` reduces to
+    `L(pred,GT)` for that view (both terms become the GT loss). Shapes stay
+    consistent so no loss-site changes are needed.
+    """
 
     pi3x_root: str
     gt_root: str
@@ -307,10 +317,17 @@ class DualPointTargetLoader(transforms.DataTransformFn):
         ("left_wrist", "wrist"),
     )
     pi3x_legacy_flip: bool = False
+    pi3x_disabled_cams: tuple[str, ...] = ()
 
     def __post_init__(self):
         if not 0.0 <= self.gt_weight <= 1.0:
             raise ValueError(f"gt_weight must be in [0, 1], got {self.gt_weight}")
+        cam_keys = {cam for cam, _ in self.cam_to_npz_subdir}
+        unknown = set(self.pi3x_disabled_cams) - cam_keys
+        if unknown:
+            raise ValueError(
+                f"pi3x_disabled_cams contains keys not in cam_to_npz_subdir: {sorted(unknown)}"
+            )
 
     def __call__(self, data: dict) -> dict:
         episode_index = int(np.asarray(data["episode_index"]).item())
@@ -330,6 +347,15 @@ class DualPointTargetLoader(transforms.DataTransformFn):
             frame_index,
             self.cam_to_npz_subdir,
         )
+
+        if self.pi3x_disabled_cams:
+            disabled_idx = [
+                i for i, (cam, _) in enumerate(self.cam_to_npz_subdir) if cam in self.pi3x_disabled_cams
+            ]
+            for i in disabled_idx:
+                xy_pi3x[i] = xy_gt[i]
+                logz_pi3x[i] = logz_gt[i]
+                conf_pi3x[i] = conf_gt[i]
 
         # Keep the two teachers separate. The model computes
         # alpha * L(pred, GT) + (1-alpha) * L(pred, Pi3X).

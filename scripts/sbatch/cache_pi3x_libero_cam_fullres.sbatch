@@ -55,7 +55,7 @@ export OPENPI_DATA_HOME="${OPENPI_DATA_HOME:-${OPENPI_CACHE_DIR}}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${GEO_ROOT}/.cache/xdg}"
 unset TRANSFORMERS_CACHE
 
-DATA_ROOT="${HF_LEROBOT_HOME}/glbreeze/libero_object_cam_v3"
+DATA_ROOT="${DATA_ROOT:-${HF_LEROBOT_HOME}/glbreeze/libero_object_cam_v3}"
 PI3X_REPO="${PI3X_REPO:-${GEO_ROOT}/Pi3X_Libero}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-${OPENPI_CACHE_DIR}/pi3x_targets_224/libero_object_cam_v3}"
 BATCH_SIZE="${BATCH_SIZE:-16}"

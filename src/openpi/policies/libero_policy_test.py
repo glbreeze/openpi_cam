@@ -157,3 +157,62 @@ def test_mixed_loader_legacy_flip_only_when_source_is_pi3x(tmp_path):
     out_gt = gt_only(dict(data))
     assert float(out_gt["point_target_source"]) == 1.0
     assert out_gt["point_target_xy"][0, 0, 0, 0] == 100.0
+
+
+def _write_per_cam_target(root, episode_index, *, cams, pi3x_value, gt_value=None):
+    """Write distinct sentinels per cam so we can verify per-cam overwrites."""
+    for offset, cam in enumerate(cams):
+        cam_dir = root / cam
+        cam_dir.mkdir(parents=True, exist_ok=True)
+        # Encode (value + offset) so each cam carries a distinct constant.
+        v = (gt_value if gt_value is not None else pi3x_value) + offset
+        np.savez(
+            cam_dir / f"episode_{episode_index:06d}.npz",
+            xy=np.full((2, 4, 4, 2), v, dtype=np.float32),
+            log_z=np.full((2, 4, 4, 1), v + 0.1, dtype=np.float32),
+            conf=np.full((2, 4, 4, 1), v + 0.2, dtype=np.float32),
+        )
+
+
+def test_dual_loader_pi3x_disabled_cams_copies_gt_into_pi3x_slot(tmp_path):
+    """For cams in pi3x_disabled_cams, the pi3x_target_* tensor at that view index
+    must equal the GT slot — so the downstream dual loss reduces to GT-only there
+    while keeping the (V, H, W, C) shape consistent for the rest of the views."""
+    pi3x_root = tmp_path / "pi3x"
+    gt_root = tmp_path / "gt"
+    cams = ("agent", "wrist", "right_wrist")
+    _write_per_cam_target(pi3x_root, episode_index=7, cams=cams, pi3x_value=1.0)
+    _write_per_cam_target(gt_root, episode_index=7, cams=cams, pi3x_value=0.0, gt_value=100.0)
+    data = {"episode_index": np.asarray(7), "frame_index": np.asarray(0)}
+
+    loader = libero_policy.DualPointTargetLoader(
+        pi3x_root=str(pi3x_root),
+        gt_root=str(gt_root),
+        gt_weight=0.5,
+        cam_to_npz_subdir=(("base", "agent"), ("left_wrist", "wrist"), ("right_wrist", "right_wrist")),
+        pi3x_disabled_cams=("right_wrist",),
+    )
+    out = loader(dict(data))
+
+    # GT slot is unaffected for all 3 cams: 100, 101, 102.
+    assert np.allclose(out["point_target_xy"][0], 100.0)
+    assert np.allclose(out["point_target_xy"][1], 101.0)
+    assert np.allclose(out["point_target_xy"][2], 102.0)
+    # Pi3X slot: unaffected for agent (1.0) and wrist (2.0); overwritten with GT for right_wrist (102.0).
+    assert np.allclose(out["pi3x_target_xy"][0], 1.0)
+    assert np.allclose(out["pi3x_target_xy"][1], 2.0)
+    assert np.allclose(out["pi3x_target_xy"][2], 102.0)
+    # logz/conf follow the same per-cam pattern (values offset per _write_per_cam_target).
+    assert np.allclose(out["pi3x_target_logz"][2], 102.1)
+    assert np.allclose(out["pi3x_target_conf"][2], 102.2)
+
+
+def test_dual_loader_pi3x_disabled_cams_validates_unknown_keys(tmp_path):
+    import pytest
+
+    with pytest.raises(ValueError, match="not in cam_to_npz_subdir"):
+        libero_policy.DualPointTargetLoader(
+            pi3x_root=str(tmp_path / "pi3x"),
+            gt_root=str(tmp_path / "gt"),
+            pi3x_disabled_cams=("nope",),
+        )
