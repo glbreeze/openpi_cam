@@ -160,6 +160,7 @@ def _pi3x_point_loss(
     depth_weight_min_frac: float,
     ray_loss_weight: float,
     depth_loss_weight: float,
+    depth_weighting: str = "uniform",
 ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     finite_target = torch.isfinite(xy_target).all(dim=-1, keepdim=True) & torch.isfinite(logz_target)
     xy_target = torch.nan_to_num(xy_target, nan=0.0, posinf=0.0, neginf=0.0)
@@ -175,9 +176,14 @@ def _pi3x_point_loss(
     ray_denom = (ray_weights.sum() * xy_pred.shape[-1]).clamp_min(1.0)
     ray_loss = (torch.abs(xy_pred - xy_target) * ray_weights).sum() / ray_denom
 
-    mean_depth = _weighted_mean(target_depth.detach(), valid_weights, dim=(2,), keepdim=True)
-    min_depth = (depth_weight_min_frac * mean_depth).clamp_min(1e-6)
-    depth_weights = 1.0 / target_depth.detach().clamp_min(min_depth).clamp_min(1e-6)
+    if depth_weighting == "pi3x_inverse":
+        mean_depth = _weighted_mean(target_depth.detach(), valid_weights, dim=(2,), keepdim=True)
+        min_depth = (depth_weight_min_frac * mean_depth).clamp_min(1e-6)
+        depth_weights = 1.0 / target_depth.detach().clamp_min(min_depth).clamp_min(1e-6)
+    elif depth_weighting == "uniform":
+        depth_weights = torch.ones_like(target_depth)
+    else:
+        raise ValueError(f"depth_weighting must be 'pi3x_inverse' or 'uniform', got {depth_weighting!r}")
     point_weights = valid_weights * depth_weights
 
     scale = _align_points_scale_l1(
@@ -206,13 +212,23 @@ def _legacy_conf_mse_point_loss(
     view_mask: Tensor,
     *,
     conf_threshold: float,
+    order: int = 2,
 ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     mask = (torch.sigmoid(conf_target) > conf_threshold).to(xy_pred.dtype)
     mask = mask * view_mask[:, :, None, None].to(xy_pred.dtype)
 
+    if order == 1:
+        xy_resid = torch.abs(xy_pred - xy_target)
+        z_resid = torch.abs(logz_pred - logz_target)
+    elif order == 2:
+        xy_resid = (xy_pred - xy_target) ** 2
+        z_resid = (logz_pred - logz_target) ** 2
+    else:
+        raise ValueError(f"legacy_conf_loss_order must be 1 (L1) or 2 (MSE), got {order!r}")
+
     denom = mask.sum().clamp_min(1.0)
-    xy_loss = ((xy_pred - xy_target) ** 2 * mask).sum() / denom / xy_pred.shape[-1]
-    z_loss = ((logz_pred - logz_target) ** 2 * mask).sum() / denom
+    xy_loss = (xy_resid * mask).sum() / denom / xy_pred.shape[-1]
+    z_loss = (z_resid * mask).sum() / denom
 
     total = xy_loss + z_loss
     scale = torch.ones(xy_pred.shape[0], dtype=xy_pred.dtype, device=xy_pred.device)
@@ -773,6 +789,7 @@ class PI0Pytorch(nn.Module):
                             conf_tgt_f,
                             view_mask,
                             conf_threshold=ph_cfg.legacy_conf_threshold,
+                            order=ph_cfg.legacy_conf_loss_order,
                         )
                     if ph_cfg.loss_type == "pi3x_local_pointmap":
                         conf_weights = torch.sigmoid(conf_tgt_f).to(xy_pred.dtype)
@@ -788,6 +805,7 @@ class PI0Pytorch(nn.Module):
                             depth_weight_min_frac=ph_cfg.depth_weight_min_frac,
                             ray_loss_weight=ph_cfg.ray_loss_weight,
                             depth_loss_weight=ph_cfg.depth_loss_weight,
+                            depth_weighting=ph_cfg.depth_weighting,
                         )
                     raise ValueError(f"Unsupported aux point loss_type: {ph_cfg.loss_type!r}")
 
