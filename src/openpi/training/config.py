@@ -975,6 +975,66 @@ _CONFIGS = [
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
     ),
+    # Architecture ablation A5: pi0_libero_cam_pytorch_prope_ray_view with
+    # ray_enc_type=False (drop the per-pixel ray embedding). PRoPE + standard
+    # cross-view fusion stay on; no distillation. Isolates the contribution of
+    # the ray embedding alone vs. PRoPE + cross-view fusion.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_view",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    # Architecture ablation A6: pi0_libero_cam_pytorch_prope_ray_view with PRoPE
+    # disabled (pose_enc_type="null", prope_layer_idx=()). Ray embedding +
+    # standard cross-view fusion (with 2D RoPE) stay on; no distillation.
+    # Isolates the contribution of PRoPE alone vs. ray + cross-view fusion.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_ray_view",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="null",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(),
+            ),
+            disable_geometric_augs=True,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
     # Same backbone as pi0_libero_cam_pytorch_prope_ray_view, plus the auxiliary
     # PointHead supervised by Pi3X patch-resolution targets cached upstream by
     # `scripts/cache_pi3x_targets.py`.
