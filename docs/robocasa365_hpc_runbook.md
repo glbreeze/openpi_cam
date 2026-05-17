@@ -111,9 +111,13 @@ You should see:
 ```
 
 Eyeball `robocasa365_setup_check/*__gym_wrapper_humanview.png` — should look
-right-side-up. The `*__raw_mujoco_lerobot_match.png` versions should be
-upside-down (this is the orientation the LeRobot training data is in and what
-the eval client needs to send to the policy server).
+right-side-up. The `*__raw_mujoco_buffer.png` versions are upside-down
+(visual-debug artifact only). **The LeRobot stored frames decode
+right-side-up too** (verified by decoding one MP4 frame with imageio), so
+the eval client passes the gym frame through to the policy server with no
+flip. This is opposite to my earlier inference from reading the converter
+source; the conversion path apparently flips during `extract_trajectory`
+or during MP4 encode.
 
 ---
 
@@ -291,13 +295,12 @@ The starVLA repo ships a websocket runner for the upstream robocasa benchmark
 at `examples/Robocasa_365/eval_files/simulation_env.py`. The same runner
 works for our policy if we replace its `PolicyWarper` with a thin client that
 talks to openpi's websocket server. **This adapter does not exist yet** — it
-needs to (a) undo the gym wrapper's vertical flip (`img[::-1, :, :]`) before
-sending observations, and (b) repack the 12-d action chunk that comes back
-from openpi into the gym wrapper's action dict (keys
-`action.end_effector_position`, `action.end_effector_rotation`,
-`action.gripper_close`, `action.base_motion`, `action.control_mode`) per the
-LeRobot action layout `[base_motion(4), control_mode(1), eef_pos(3),
-eef_rot(3), gripper_close(1)]`.
+needs to repack the 12-d action chunk that comes back from openpi into the
+gym wrapper's action dict (keys `action.end_effector_position`,
+`action.end_effector_rotation`, `action.gripper_close`, `action.base_motion`,
+`action.control_mode`) per the LeRobot action layout `[base_motion(4),
+control_mode(1), eef_pos(3), eef_rot(3), gripper_close(1)]`. Image
+orientation is identity (gym frame = training frame).
 
 Track this as TODO; pattern after `scripts/robotwin_eval_policies/` once the
 training side is producing checkpoints.

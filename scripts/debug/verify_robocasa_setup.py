@@ -10,12 +10,12 @@ Run this from the `robocasa365` conda env (NOT the openpi env) after
 What it verifies:
 
   1. The gym env loads, resets, and exposes the expected obs/action keys.
-  2. Image direction: dumps a frame from each cam in two versions: the gym
-     wrapper's output (which has `img[::-1, :, :]` already applied, so it
-     looks right-side-up to a human) and the raw MuJoCo buffer that the
-     LeRobot training data actually contains (re-flipped — looks
-     upside-down because OpenGL stores row 0 at the bottom). The eval
-     client must send the upside-down version so it matches training.
+  2. Image direction: dumps the gym wrapper's frame (already vflipped from
+     the raw MuJoCo buffer, so right-side-up to a human) and the raw MuJoCo
+     buffer (re-flipped, upside-down). Empirically the LeRobot v2.1 stored
+     frames also decode right-side-up, so the gym output and the LeRobot
+     training data agree — the eval client passes the gym frame through
+     to the policy server with no flip. (Both PNGs kept for debugging.)
   3. Action space: confirms 12-d action dict layout matches the
      PandaOmron_modality.json indices we hardcoded into robocasa_policy.py.
   4. Cam intrinsics + extrinsics: pulls K and cam-to-world from the
@@ -45,12 +45,11 @@ import robosuite
 _ = (robocasa.__name__, robosuite.__name__)  # ensure the imports survive an unused-import linter
 
 
-def _redo_gym_flip_to_match_lerobot(img: np.ndarray) -> np.ndarray:
+def _redo_gym_flip(img: np.ndarray) -> np.ndarray:
     """The gym wrapper applies `img[::-1, :, :]` to the raw MuJoCo buffer
     before returning. Re-apply the same flip to recover the raw buffer
-    orientation, which is what `convert_hdf5_lerobot.py` writes into the
-    LeRobot training data (OpenGL stores row 0 at the bottom, so it looks
-    upside-down to a human)."""
+    orientation (upside-down to a human). Kept as a visual-debugging
+    artifact only — the LeRobot stored frames are right-side-up, not raw."""
     return img[::-1, :, :]
 
 
@@ -129,12 +128,10 @@ def main() -> None:
             print(f"  MISSING: {key}")
             continue
         img_gym = np.asarray(obs[key])
-        img_raw = _redo_gym_flip_to_match_lerobot(img_gym)
+        img_raw = _redo_gym_flip(img_gym)
         imageio.imwrite(args.out / f"{cam}__gym_wrapper_humanview.png", img_gym)
-        imageio.imwrite(args.out / f"{cam}__raw_mujoco_lerobot_match.png", img_raw)
-        print(
-            f"  {cam}: gym shape={img_gym.shape} -> wrote __gym_wrapper_humanview.png and __raw_mujoco_lerobot_match.png"
-        )
+        imageio.imwrite(args.out / f"{cam}__raw_mujoco_buffer.png", img_raw)
+        print(f"  {cam}: gym shape={img_gym.shape} -> wrote __gym_wrapper_humanview.png and __raw_mujoco_buffer.png")
 
     # Dump K + T_wc from MuJoCo. env.env reaches the inner RoboCasaGymEnv.
     inner = env.unwrapped
@@ -169,9 +166,10 @@ def main() -> None:
     env.close()
     print(f"\nArtifacts written to {args.out.resolve()}")
     print("Eyeball the two PNG variants per cam:")
-    print("  '__gym_wrapper_humanview.png'  — what the gym client sees; should look RIGHT-SIDE-UP.")
-    print("  '__raw_mujoco_lerobot_match.png' — what's in the LeRobot training data; UPSIDE-DOWN is expected.")
-    print("The eval client must send the raw / upside-down version so train and eval agree.")
+    print("  '__gym_wrapper_humanview.png'  — gym wrapper output; right-side-up.")
+    print("  '__raw_mujoco_buffer.png'      — raw buffer (re-flipped); upside-down.")
+    print("Empirically the LeRobot v2.1 stored frames also decode right-side-up,")
+    print("so the eval client passes the gym frame through unchanged.")
 
 
 if __name__ == "__main__":

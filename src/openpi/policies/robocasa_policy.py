@@ -10,25 +10,33 @@ The upstream robocasa LeRobot conversion (PandaOmron_modality.json) stores:
   is at dims [5:12] (eef_pos, eef_rot, gripper_close).
 * 3 cams at 256x256: robot0_agentview_left/right, robot0_eye_in_hand.
 
-Image direction (verified empirically against a live OpenDrawer render):
+Image direction (verified empirically against `OpenDrawer/lerobot/videos/.../episode_000000.mp4`):
 
-* The robosuite `_get_observations` `..._image` buffer is upside-down by
-  pixel convention (OpenGL y-up: first row in the buffer is the bottom of
-  the image). `convert_hdf5_lerobot.py` writes this raw buffer straight
-  into the LeRobot frames, so the LeRobot training data is upside-down.
-* `RoboCasaGymEnv.get_basic_observation` applies `img[::-1, :, :]` to flip
-  it right-side-up before returning to the gym client — so the eye-friendly
-  thing the eval client sees is NOT the same orientation the model was
-  trained on. Eval clients **must redo (`img[::-1, :, :]`) that flip** on
-  the gym output before sending to the policy server, otherwise training
-  and eval see opposite-handed images.
-* openpi's `_preprocess_image` then applies `[::-1, ::-1]` (flip both axes)
-  on the upside-down LeRobot/eval-input frame. Net result the model sees:
-  right-side-up + horizontally mirrored.
+* The LeRobot v2.1 video frames decode **right-side-up** by pixel convention
+  (row 0 is the top of the image, ceiling/wall on top, floor on bottom).
+  This is opposite to what I initially expected from reading
+  `convert_hdf5_lerobot.py` — the conversion path apparently produces an
+  already-y-down frame (likely via a flip during `extract_trajectory` or
+  during MP4 encode).
+* `RoboCasaGymEnv.get_basic_observation` applies `img[::-1, :, :]` to its
+  buffer before returning, and the result is also right-side-up. So the
+  gym wrapper output and the LeRobot stored frames **agree** in
+  orientation. The eval client should pass through unchanged.
+* No openpi-side `[::-1, ::-1]` flip exists in the current
+  `preprocess_observation` (JAX) or `preprocess_observation_pytorch` —
+  only stale comments in `libero_policy.py`. So neither training nor
+  inference re-orients the image after it reaches the model.
 
-K + extrinsic conventions match LIBERO (MuJoCo + OpenGL), so we re-use
-`libero_policy._adjust_K_for_openpi_image_flip` and
-`libero_policy._mujoco_to_opencv_extrinsic` directly.
+K + extrinsic conventions:
+
+* The image is in standard image-pixel convention (y-down). K stays
+  natural (positive fx, fy, cx=cy=W/2) — no `fx → -fx` adjustment.
+  Mirrors the `RobotwinInputs` pass-through K path.
+* MuJoCo's `sim.data.cam_xmat` is in OpenGL camera frame (x-right, y-up,
+  z-back); the extrinsic still needs the OpenGL→OpenCV swap so that
+  `K @ T_wc^{-1} @ X_world` projects to the right pixel. We reuse
+  `libero_policy._mujoco_to_opencv_extrinsic` for that (negates columns
+  1 and 2 of the rotation block).
 """
 
 from __future__ import annotations
@@ -93,6 +101,18 @@ def _maybe_get_first(data: dict, *keys: str):
         if key in data:
             return data[key]
     return None
+
+
+def _passthrough_intrinsic(K) -> np.ndarray:
+    """Identity K pass-through for RoboCasa.
+
+    The LeRobot stored frames decode right-side-up (verified empirically) and
+    the current openpi pipeline does not apply any image flip. So K stays the
+    natural OpenGL-derived matrix (positive fx, fy, cx=cy=W/2). Same pattern
+    as `robotwin_policy._adjust_K_for_openpi_image_flip` (kept as a named
+    helper in case a per-cam adjustment is needed later).
+    """
+    return np.asarray(K, dtype=np.float32).copy()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -211,10 +231,10 @@ class RobocasaCamInputs(transforms.DataTransformFn):
     """Camera-aware variant of `RobocasaInputs` for the Pi3X cam-aware Pi0 recipe.
 
     Plumbs per-camera intrinsics (K) and camera-to-world extrinsics (T_wc) for
-    all three cams, with the same MuJoCo->OpenCV adjustment used by LIBERO
-    (`fx -> -fx` on K to absorb openpi's left-right image flip; columns 1 and
-    2 of the rotation block negated on T_wc to swap OpenGL y-up/z-back for
-    OpenCV y-down/z-forward).
+    all three cams. K is passed through unchanged (right-side-up image, no
+    flip in the openpi pipeline — see module docstring). T_wc is the
+    OpenGL→OpenCV camera-frame swap from `libero_policy._mujoco_to_opencv_extrinsic`
+    (negate columns 1 and 2 of the rotation block).
 
     Expected dataset keys (post repack into `observation/*` form by the data
     config):
@@ -256,7 +276,7 @@ class RobocasaCamInputs(transforms.DataTransformFn):
                 f"observation/{src_cam}_intrinsic",
             ):
                 if intr_key in data:
-                    out[f"{dst_cam}_intrinsic"] = libero_policy._adjust_K_for_openpi_image_flip(data[intr_key])  # noqa: SLF001
+                    out[f"{dst_cam}_intrinsic"] = _passthrough_intrinsic(data[intr_key])
                     break
 
         # Pass-through Pi3X / GT geometry-distillation targets.
