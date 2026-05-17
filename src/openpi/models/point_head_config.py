@@ -43,7 +43,7 @@ class AuxPointHeadConfig:
     # "uniform"      -> all-ones; appropriate for tabletop scenes where the depth
     #                   range is narrow (~5x near:far) so inverse-depth weighting is
     #                   nearly a no-op and only injects teacher-depth bias.
-    depth_weighting: typing.Literal["pi3x_inverse", "uniform"] = "uniform"
+    depth_weighting: typing.Literal["pi3x_inverse", "uniform"] = "pi3x_inverse"
     # Pi3X aligns scale on a fixed-size sampled point set. <= 0 uses all points.
     scale_align_num_points: int = 4096
     # 16 -> patch-level prediction (matches the avg-pooled cache; cheap).

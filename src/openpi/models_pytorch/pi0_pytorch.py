@@ -160,7 +160,7 @@ def _pi3x_point_loss(
     depth_weight_min_frac: float,
     ray_loss_weight: float,
     depth_loss_weight: float,
-    depth_weighting: str = "uniform",
+    depth_weighting: str = "pi3x_inverse",
 ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     finite_target = torch.isfinite(xy_target).all(dim=-1, keepdim=True) & torch.isfinite(logz_target)
     xy_target = torch.nan_to_num(xy_target, nan=0.0, posinf=0.0, neginf=0.0)
