@@ -12,6 +12,7 @@ __pycache__/
 *$py.class
 tp.py
 *.err
+*.out
 
 # C extensions
 *.so
@@ -179,3 +180,9 @@ log/
 .codex
 
 checkpoints_*
+
+# Local scratch / personal
+pi0_base_ckpt/
+logs/
+evaluation.md
+train_torch.sh
