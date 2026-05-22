@@ -1,6 +1,8 @@
 import dataclasses
 import logging
+import os
 import pathlib
+from collections import OrderedDict
 
 import einops
 import numpy as np
@@ -9,6 +11,42 @@ from openpi import transforms
 from openpi.models import model as _model
 
 logger = logging.getLogger("openpi.libero_policy")
+
+
+_PI3X_TARGET_CACHE: OrderedDict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = OrderedDict()
+
+
+def _get_pi3x_target_cache_size() -> int:
+    raw_value = os.environ.get("OPENPI_PI3X_TARGET_CACHE_EPISODES", "16")
+    try:
+        cache_size = int(raw_value)
+    except ValueError:
+        logger.warning("Invalid OPENPI_PI3X_TARGET_CACHE_EPISODES=%r; falling back to 16", raw_value)
+        return 16
+    return max(cache_size, 0)
+
+
+def _load_pi3x_episode(npz_path: pathlib.Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    cache_key = str(npz_path.resolve())
+    cached = _PI3X_TARGET_CACHE.get(cache_key)
+    if cached is not None:
+        _PI3X_TARGET_CACHE.move_to_end(cache_key)
+        return cached
+
+    with np.load(npz_path) as f:
+        episode = (
+            np.asarray(f["xy"], dtype=np.float32),
+            np.asarray(f["log_z"], dtype=np.float32),
+            np.asarray(f["conf"], dtype=np.float32),
+        )
+
+    cache_size = _get_pi3x_target_cache_size()
+    if cache_size > 0:
+        _PI3X_TARGET_CACHE[cache_key] = episode
+        while len(_PI3X_TARGET_CACHE) > cache_size:
+            _PI3X_TARGET_CACHE.popitem(last=False)
+
+    return episode
 
 
 def make_libero_example() -> dict:
@@ -184,10 +222,10 @@ class Pi3xLiberoTargetLoader(transforms.DataTransformFn):
         xy_views, logz_views, conf_views = [], [], []
         for _, subdir in self.cam_to_npz_subdir:
             npz_path = root / subdir / f"episode_{episode_index:06d}.npz"
-            with np.load(npz_path, mmap_mode="r") as f:
-                xy_views.append(np.asarray(f["xy"][frame_index], dtype=np.float32))
-                logz_views.append(np.asarray(f["log_z"][frame_index], dtype=np.float32))
-                conf_views.append(np.asarray(f["conf"][frame_index], dtype=np.float32))
+            xy_episode, logz_episode, conf_episode = _load_pi3x_episode(npz_path)
+            xy_views.append(np.asarray(xy_episode[frame_index], dtype=np.float32))
+            logz_views.append(np.asarray(logz_episode[frame_index], dtype=np.float32))
+            conf_views.append(np.asarray(conf_episode[frame_index], dtype=np.float32))
 
         data["pi3x_target_xy"] = np.stack(xy_views, axis=0)  # (V, 16, 16, 2)
         data["pi3x_target_logz"] = np.stack(logz_views, axis=0)  # (V, 16, 16, 1)

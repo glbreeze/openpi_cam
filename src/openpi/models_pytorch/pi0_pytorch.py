@@ -564,10 +564,22 @@ class PI0Pytorch(nn.Module):
                 xy_pred_v = xy_pred[:, :v_tgt]
                 z_pred_v = z_pred[:, :v_tgt]
 
-                # Soft confidence weighting: w_pix = sigmoid(conf_tgt), matching Pi3's
-                # native distillation loss (vs. a hard sigmoid>0.1 gate). Per-view
-                # image_mask zeros out dropped views.
-                w_pix = torch.sigmoid(conf_tgt_f).to(xy_pred.dtype)  # (B, V_t, P, 1)
+                conf = torch.sigmoid(conf_tgt_f).to(xy_pred.dtype)  # (B, V_t, P, 1)
+                mode = self.config.aux_point_head.conf_weight_mode
+                threshold = self.config.aux_point_head.conf_threshold
+                if mode == "hard":
+                    w_pix = (conf > threshold).to(xy_pred.dtype)
+                elif mode == "soft":
+                    w_pix = conf
+                elif mode == "hybrid":
+                    w_pix = conf * (conf > threshold).to(xy_pred.dtype)
+                else:
+                    raise ValueError(
+                        f"Unknown aux_point_head.conf_weight_mode={mode!r}; expected 'hard', 'soft', or 'hybrid'"
+                    )
+
+                # Per-view image_mask zeros out dropped views after the confidence
+                # weighting / gating policy above constructs the per-patch weights.
                 view_mask = img_masks[:, :v_tgt].to(xy_pred.dtype)  # (B, V_t)
                 w_pix = w_pix * view_mask[:, :, None, None]
 

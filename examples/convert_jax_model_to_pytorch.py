@@ -47,6 +47,13 @@ from openpi.training import utils
 import openpi.training.config as _config
 
 
+def _to_torch_tensor(value):
+    array = np.asarray(value)
+    if array.dtype.name == "bfloat16":
+        array = array.astype(np.float32)
+    return torch.from_numpy(array)
+
+
 def slice_paligemma_state_dict(state_dict, config):
     """Convert PaliGemma JAX parameters to PyTorch format."""
     suffix = "/value" if "img/embedding/kernel/value" in state_dict else ""
@@ -261,7 +268,7 @@ def slice_paligemma_state_dict(state_dict, config):
 
     for key, value in state_dict.items():
         if key not in expert_keys:
-            final_state_dict[key] = torch.from_numpy(value)
+            final_state_dict[key] = _to_torch_tensor(value)
         else:
             expert_dict[key] = value
 
@@ -386,7 +393,7 @@ def slice_gemma_state_dict(state_dict, config, *, num_expert, checkpoint_dir, pi
     final_state_dict = {}
     for key, value in state_dict.items():
         if not isinstance(value, torch.Tensor):
-            final_state_dict[key] = torch.from_numpy(value)
+            final_state_dict[key] = _to_torch_tensor(value)
         else:
             final_state_dict[key] = value
 
@@ -435,7 +442,7 @@ def convert_pi0_checkpoint(
     print(f"Model config: {model_config}")
 
     # Break down orbax ckpts by restoring via JAX to respect dtype
-    initial_params = slice_initial_orbax_checkpoint(checkpoint_dir=checkpoint_dir, restore_precision="float32")
+    initial_params = slice_initial_orbax_checkpoint(checkpoint_dir=checkpoint_dir, restore_precision=precision)
 
     # Process projection params
     if model_config.pi05:
@@ -468,8 +475,8 @@ def convert_pi0_checkpoint(
         pytorch_weight_key = f"{key}.weight"
         pytorch_bias_key = f"{key}.bias"
 
-        projection_params[pytorch_weight_key] = torch.from_numpy(np.array(weight)).T
-        projection_params[pytorch_bias_key] = torch.from_numpy(np.array(bias))
+        projection_params[pytorch_weight_key] = _to_torch_tensor(weight).T
+        projection_params[pytorch_bias_key] = _to_torch_tensor(bias)
 
     # Create configs based on checkpoint path
     # All models use the same PaliGemma config structure

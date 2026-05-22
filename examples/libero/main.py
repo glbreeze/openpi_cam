@@ -1,3 +1,4 @@
+from typing import Optional
 import collections
 import dataclasses
 import json
@@ -79,7 +80,7 @@ class Args:
     # Utils
     #################################################################################################################
     video_out_path: str = "data/libero/videos"  # Path to save videos
-    summary_out_path: str | None = None  # Optional JSON summary path
+    summary_out_path: Optional[str] = None  # Optional JSON summary path
 
     seed: int = 7  # Random Seed (for reproducibility)
 
@@ -282,7 +283,12 @@ def _get_libero_env(task, resolution, seed):
 
 def _load_task_init_states(task):
     init_states_path = pathlib.Path(get_libero_path("init_states")) / task.problem_folder / task.init_states_file
-    return torch.load(init_states_path, weights_only=False)
+    try:
+        return torch.load(init_states_path, weights_only=False)
+    except TypeError:
+        # Older torch versions used by the dedicated LIBERO env don't support
+        # the `weights_only` kwarg.
+        return torch.load(init_states_path)
 
 
 def _get_camera_extrinsic(env, camera_name):

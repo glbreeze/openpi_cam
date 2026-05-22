@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=pi0_libero_object_ft
-#SBATCH --output=/scratch/yp2841/geometry-vla/openpi_cam/log/pi0_libero_object_ft/slurm-%j.out
-#SBATCH --error=/scratch/yp2841/geometry-vla/openpi_cam/log/pi0_libero_object_ft/slurm-%j.err
+#SBATCH --output=/scratch/%u/openpi_cam/log/pi0_libero_object_ft/slurm-%j.out
+#SBATCH --error=/scratch/%u/openpi_cam/log/pi0_libero_object_ft/slurm-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=256G
 #SBATCH --time=16:00:00
-#SBATCH --account=torch_pr_637_tandon_advanced
-#SBATCH --partition=h200_tandon
+#SBATCH --account=torch_pr_69_tandon_advanced
+#SBATCH --partition=h100_tandon,h200_tandon
 #SBATCH --gres=gpu:h200:4
 #SBATCH --export=ALL
 
@@ -41,21 +41,23 @@ resolve_repo_root() {
 if [[ -z "${REPO_ROOT:-}" ]]; then
   REPO_ROOT="$(resolve_repo_root || true)"
 fi
-if [[ -z "${REPO_ROOT}" && -d "/scratch/yp2841/geometry-vla/openpi_cam" ]]; then
-  REPO_ROOT="/scratch/yp2841/geometry-vla/openpi_cam"
+if [[ -z "${REPO_ROOT}" && -d "/scratch/${USER}/openpi_cam" ]]; then
+  REPO_ROOT="/scratch/${USER}/openpi_cam"
 fi
 if [[ -z "${REPO_ROOT}" ]]; then
   echo "Unable to locate repo root. Set REPO_ROOT or submit from inside the repo." >&2
   exit 1
 fi
 GEO_ROOT=${GEO_ROOT:-$(cd -- "${REPO_ROOT}/.." && pwd)}
+REAL_HOME=${REAL_HOME:-${HOME:-/home/${USER}}}
 
 USE_CAM=${USE_CAM:-false}
 RESUME=${RESUME:-false}
 WANDB_ENABLED=${WANDB_ENABLED:-true}
 WANDB_PROJECT=${WANDB_PROJECT:-openpi_cam_libero_object}
+WANDB_ENTITY=${WANDB_ENTITY:-}
 NUM_GPUS=${NUM_GPUS:-${SLURM_GPUS_ON_NODE:-4}}
-NUM_WORKERS=${NUM_WORKERS:-16}
+NUM_WORKERS=${NUM_WORKERS:-}
 BATCH_SIZE=${BATCH_SIZE:-32}
 NUM_TRAIN_STEPS=${NUM_TRAIN_STEPS:-60000}
 SAVE_INTERVAL=${SAVE_INTERVAL:-1000}
@@ -63,6 +65,7 @@ KEEP_PERIOD=${KEEP_PERIOD:-5000}
 CHECKPOINT_BASE_DIR=${CHECKPOINT_BASE_DIR:-${REPO_ROOT}/checkpoints}
 CACHE_ROOT=${CACHE_ROOT:-${GEO_ROOT}/.cache/huggingface}
 OPENPI_CACHE_ROOT=${OPENPI_CACHE_ROOT:-${GEO_ROOT}/.cache/openpi}
+OPENPI_PI3X_TARGETS_224_BASE_DIR=${OPENPI_PI3X_TARGETS_224_BASE_DIR:-/scratch/yp2841/geometry-vla/.cache/openpi/pi3x_targets_224}
 MODEL_POSE_ENC_TYPE=${MODEL_POSE_ENC_TYPE:-}
 MODEL_RAY_ENC_TYPE=${MODEL_RAY_ENC_TYPE:-}
 MODEL_VIEW_ENC_TYPE=${MODEL_VIEW_ENC_TYPE:-}
@@ -82,6 +85,19 @@ SIMPLE_STAGE2_DECAY_STEPS=${SIMPLE_STAGE2_DECAY_STEPS:-55000}
 SIMPLE_STAGE2_END_LR=${SIMPLE_STAGE2_END_LR:-2.5e-6}
 SIMPLE_NEW_MODULE_PREFIXES=${SIMPLE_NEW_MODULE_PREFIXES:-paligemma_with_expert.cam_pose_encoder,paligemma_with_expert.view_embedding,paligemma_with_expert.cross_view_fusion,paligemma_with_expert.ray_embed}
 SIMPLE_STAGE2_NEW_MODULE_LR_MULTIPLIER=${SIMPLE_STAGE2_NEW_MODULE_LR_MULTIPLIER:-4.0}
+OPENPI_ENABLE_GPU_FILLER=${OPENPI_ENABLE_GPU_FILLER:-false}
+OPENPI_GPU_FILLER_THRESHOLD=${OPENPI_GPU_FILLER_THRESHOLD:-70}
+OPENPI_GPU_FILLER_STOP_THRESHOLD=${OPENPI_GPU_FILLER_STOP_THRESHOLD:-78}
+OPENPI_GPU_FILLER_POLL_SEC=${OPENPI_GPU_FILLER_POLL_SEC:-1.0}
+OPENPI_GPU_FILLER_WINDOW=${OPENPI_GPU_FILLER_WINDOW:-12}
+OPENPI_GPU_FILLER_MATRIX_SIZE=${OPENPI_GPU_FILLER_MATRIX_SIZE:-4096}
+OPENPI_GPU_FILLER_FILL_ITERS=${OPENPI_GPU_FILLER_FILL_ITERS:-16}
+OPENPI_GPU_FILLER_IDLE_SLEEP_SEC=${OPENPI_GPU_FILLER_IDLE_SLEEP_SEC:-0.02}
+OPENPI_GPU_FILLER_LOG_SEC=${OPENPI_GPU_FILLER_LOG_SEC:-30}
+OPENPI_GPU_FILLER_LOG_DIR=${OPENPI_GPU_FILLER_LOG_DIR:-${REPO_ROOT}/log}
+OPENPI_GPU_FILLER_LOG_FILE=${OPENPI_GPU_FILLER_LOG_FILE:-}
+OPENPI_UR5_PREDECODED_CACHE_DIR=${OPENPI_UR5_PREDECODED_CACHE_DIR:-}
+OPENPI_RESUME_WEIGHTS_ONLY=${OPENPI_RESUME_WEIGHTS_ONLY:-false}
 
 if [[ "${USE_CAM}" == "true" ]]; then
   CONFIG_NAME=${CONFIG_NAME:-pi0_libero_cam_pytorch_full_finetune}
@@ -139,6 +155,7 @@ export HF_DATASETS_CACHE="${CACHE_ROOT}/datasets"
 export HF_HUB_CACHE="${CACHE_ROOT}/hub"
 export OPENPI_CACHE_DIR="${OPENPI_CACHE_ROOT}"
 export OPENPI_DATA_HOME="${OPENPI_CACHE_ROOT}"
+export OPENPI_PI3X_TARGETS_224_BASE_DIR
 unset TRANSFORMERS_CACHE
 
 mkdir -p \
@@ -158,26 +175,48 @@ if [[ "${THREADS_PER_PROC}" -lt 1 ]]; then
   THREADS_PER_PROC=1
 fi
 
+if [[ -z "${NUM_WORKERS}" ]]; then
+  # NUM_WORKERS is consumed per DDP rank, not globally. Default to leaving one
+  # CPU thread for the trainer and use the remaining per-rank threads for loader
+  # multiprocessing.
+  NUM_WORKERS=$(( THREADS_PER_PROC - 1 ))
+elif [[ "${NUM_WORKERS}" -gt "${THREADS_PER_PROC}" ]]; then
+  echo "Capping NUM_WORKERS from ${NUM_WORKERS} to per-rank CPU budget ${THREADS_PER_PROC}" >&2
+  NUM_WORKERS=${THREADS_PER_PROC}
+fi
+if [[ "${NUM_WORKERS}" -lt 1 ]]; then
+  NUM_WORKERS=1
+fi
+
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-${THREADS_PER_PROC}}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
+export NUM_WORKERS
 
 if [[ "${WANDB_ENABLED}" == "true" ]]; then
-  unset WANDB_DIR WANDB_CACHE_DIR WANDB_CONFIG_DIR WANDB_DATA_DIR
-  export WANDB_API_KEY="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"
-  export WANDB_DIR="${JOB_TMP_ROOT}/wandb_root"
-  export WANDB_CACHE_DIR="${JOB_TMP_ROOT}/wandb_cache"
-  export WANDB_CONFIG_DIR="${JOB_TMP_ROOT}/wandb_config"
-  export WANDB_DATA_DIR="${JOB_TMP_ROOT}/wandb_data"
+  if [[ -n "${WANDB_API_KEY_OVERRIDE:-}" ]]; then
+    export WANDB_API_KEY="${WANDB_API_KEY_OVERRIDE}"
+  elif [[ -n "${WANDB_API_KEY:-}" ]]; then
+    export WANDB_API_KEY
+  fi
+  export WANDB_DIR="${WANDB_DIR:-${JOB_TMP_ROOT}/wandb_root}"
+  export WANDB_CACHE_DIR="${WANDB_CACHE_DIR:-${JOB_TMP_ROOT}/wandb_cache}"
+  export WANDB_CONFIG_DIR="${WANDB_CONFIG_DIR:-${JOB_TMP_ROOT}/wandb_config}"
+  export WANDB_DATA_DIR="${WANDB_DATA_DIR:-${WANDB_DIR}/data}"
+  if [[ -z "${NETRC:-}" && -f "${REAL_HOME}/.netrc" ]]; then
+    export NETRC="${REAL_HOME}/.netrc"
+  fi
   mkdir -p "${WANDB_DIR}" "${WANDB_CACHE_DIR}" "${WANDB_CONFIG_DIR}" "${WANDB_DATA_DIR}"
 else
   export WANDB_MODE=disabled
 fi
 
-DATASET_DIR="${HF_LEROBOT_HOME}/${DATASET_REPO_ID}"
+DATASET_DIR="${DATASET_DIR:-${HF_LEROBOT_HOME}/${DATASET_REPO_ID}}"
 BASE_MODEL_DIR="${OPENPI_PI0_BASE_DIR}"
 NORM_STATS_ROOT="${OPENPI_PI0_LIBERO_NORM_DIR}"
 NORM_STATS_DIR="${NORM_STATS_ROOT}/${NORM_ASSET_ID}"
+INIT_WEIGHT_PATH="${PYTORCH_WEIGHT_PATH_OVERRIDE:-${BASE_MODEL_DIR}}"
+INIT_WEIGHT_CONFIG_PATH="${INIT_WEIGHT_PATH}/config.json"
 
 if [[ ! -d "${DATASET_DIR}/data" || ! -f "${DATASET_DIR}/meta/info.json" ]]; then
   echo "Missing local LeRobot dataset at ${DATASET_DIR}" >&2
@@ -187,6 +226,20 @@ fi
 if [[ ! -f "${BASE_MODEL_DIR}/model.safetensors" || ! -f "${BASE_MODEL_DIR}/config.json" ]]; then
   echo "Missing local PyTorch base model at ${BASE_MODEL_DIR}" >&2
   exit 1
+fi
+
+if [[ ! -f "${INIT_WEIGHT_PATH}/model.safetensors" ]]; then
+  echo "Missing init weights at ${INIT_WEIGHT_PATH}" >&2
+  exit 1
+fi
+
+if [[ ! -f "${INIT_WEIGHT_CONFIG_PATH}" ]]; then
+  if [[ "${INIT_WEIGHT_PATH}" == "${BASE_MODEL_DIR}" ]]; then
+    echo "Missing init config at ${INIT_WEIGHT_CONFIG_PATH}" >&2
+    exit 1
+  fi
+  echo "Init config missing at ${INIT_WEIGHT_CONFIG_PATH}; reusing base model config from ${BASE_MODEL_DIR}/config.json"
+  INIT_WEIGHT_CONFIG_PATH="${BASE_MODEL_DIR}/config.json"
 fi
 
 if [[ ! -f "${NORM_STATS_DIR}/norm_stats.json" ]]; then
@@ -328,7 +381,11 @@ run_training_command() {
   local old_lr_multipliers=${OPENPI_LR_MULTIPLIERS-__unset__}
 
   if [[ "${phase_wandb}" == "true" ]]; then
-    unset WANDB_MODE
+    if [[ "${old_wandb_mode}" == "__unset__" ]]; then
+      unset WANDB_MODE
+    else
+      export WANDB_MODE="${old_wandb_mode}"
+    fi
   else
     export WANDB_MODE=disabled
   fi
@@ -373,6 +430,60 @@ run_training_command() {
   fi
 }
 
+GPU_FILLER_PID=""
+GPU_FILLER_LOG_PATH=""
+
+start_gpu_filler() {
+  if [[ "${OPENPI_ENABLE_GPU_FILLER}" != "true" ]]; then
+    return 0
+  fi
+
+  mkdir -p "${OPENPI_GPU_FILLER_LOG_DIR}"
+
+  if [[ -n "${OPENPI_GPU_FILLER_LOG_FILE}" ]]; then
+    GPU_FILLER_LOG_PATH="${OPENPI_GPU_FILLER_LOG_FILE}"
+  else
+    GPU_FILLER_LOG_PATH="${OPENPI_GPU_FILLER_LOG_DIR}/gpu_filler-${SLURM_JOB_ID:-manual}.log"
+  fi
+
+  echo "starting gpu filler: ${GPU_FILLER_LOG_PATH}"
+  python -u "${REPO_ROOT}/scripts/gpu_util_filler.py" \
+    --threshold "${OPENPI_GPU_FILLER_THRESHOLD}" \
+    --stop-threshold "${OPENPI_GPU_FILLER_STOP_THRESHOLD}" \
+    --poll-sec "${OPENPI_GPU_FILLER_POLL_SEC}" \
+    --window "${OPENPI_GPU_FILLER_WINDOW}" \
+    --matrix-size "${OPENPI_GPU_FILLER_MATRIX_SIZE}" \
+    --fill-iters "${OPENPI_GPU_FILLER_FILL_ITERS}" \
+    --idle-sleep-sec "${OPENPI_GPU_FILLER_IDLE_SLEEP_SEC}" \
+    --log-sec "${OPENPI_GPU_FILLER_LOG_SEC}" \
+    >> "${GPU_FILLER_LOG_PATH}" 2>&1 &
+  GPU_FILLER_PID=$!
+
+  # Give the filler a brief moment to initialize so failures are visible early.
+  sleep 2
+  if ! kill -0 "${GPU_FILLER_PID}" 2>/dev/null; then
+    echo "GPU filler failed to stay running; inspect ${GPU_FILLER_LOG_PATH}" >&2
+    exit 1
+  fi
+}
+
+stop_gpu_filler() {
+  if [[ -z "${GPU_FILLER_PID}" ]]; then
+    return 0
+  fi
+  if kill -0 "${GPU_FILLER_PID}" 2>/dev/null; then
+    kill "${GPU_FILLER_PID}" 2>/dev/null || true
+    wait "${GPU_FILLER_PID}" 2>/dev/null || true
+  fi
+  GPU_FILLER_PID=""
+}
+
+cleanup_batch_sidecars() {
+  stop_gpu_filler
+}
+
+trap cleanup_batch_sidecars EXIT INT TERM
+
 echo "===== TRAIN ENV CHECK ====="
 echo "repo root: ${REPO_ROOT}"
 echo "use_cam: ${USE_CAM}"
@@ -388,18 +499,50 @@ echo "cross_view_aa_order: ${MODEL_CROSS_VIEW_AA_ORDER:-config_default}"
 echo "prope_layer_idx: ${MODEL_PROPE_LAYER_IDX:-config_default}"
 echo "dataset: ${DATASET_DIR}"
 echo "base model: ${BASE_MODEL_DIR}"
+echo "init weights: ${INIT_WEIGHT_PATH}"
 echo "norm stats: ${NORM_STATS_DIR}"
 echo "checkpoints: ${CHECKPOINT_BASE_DIR}"
 echo "wandb root: ${WANDB_DIR:-disabled}"
+echo "wandb entity: ${WANDB_ENTITY:-<unset>}"
+echo "wandb mode: ${WANDB_MODE:-online}"
 echo "num_gpus: ${NUM_GPUS}"
+echo "threads_per_proc: ${THREADS_PER_PROC}"
+echo "num_workers_per_rank: ${NUM_WORKERS}"
 echo "batch_size: ${BATCH_SIZE}"
 echo "num_train_steps: ${NUM_TRAIN_STEPS}"
 echo "save_interval: ${SAVE_INTERVAL}"
 echo "keep_period: ${KEEP_PERIOD}"
+echo "gpu monitor enabled: ${OPENPI_MONITOR_GPU_USAGE:-true}"
+echo "gpu monitor interval sec: ${OPENPI_GPU_MONITOR_INTERVAL_SEC:-30}"
+echo "gpu monitor window: ${OPENPI_GPU_MONITOR_WINDOW:-8}"
+echo "gpu monitor warn threshold: ${OPENPI_GPU_MONITOR_WARN_THRESHOLD:-50}"
+echo "ddp find_unused_parameters: ${OPENPI_DDP_FIND_UNUSED_PARAMETERS:-true}"
+echo "resume weights only: ${OPENPI_RESUME_WEIGHTS_ONLY}"
+echo "ur5 predecoded cache: ${OPENPI_UR5_PREDECODED_CACHE_DIR:-<disabled>}"
+echo "gpu filler enabled: ${OPENPI_ENABLE_GPU_FILLER}"
+echo "gpu filler threshold: ${OPENPI_GPU_FILLER_THRESHOLD}"
+echo "gpu filler stop threshold: ${OPENPI_GPU_FILLER_STOP_THRESHOLD}"
+echo "gpu filler poll sec: ${OPENPI_GPU_FILLER_POLL_SEC}"
+echo "gpu filler window: ${OPENPI_GPU_FILLER_WINDOW}"
+echo "gpu filler matrix size: ${OPENPI_GPU_FILLER_MATRIX_SIZE}"
+echo "gpu filler fill iters: ${OPENPI_GPU_FILLER_FILL_ITERS}"
+echo "gpu filler idle sleep sec: ${OPENPI_GPU_FILLER_IDLE_SLEEP_SEC}"
+echo "gpu filler log sec: ${OPENPI_GPU_FILLER_LOG_SEC}"
+echo "gpu filler log dir: ${OPENPI_GPU_FILLER_LOG_DIR}"
 which python
 python -V
 hostname
 nvidia-smi -L || true
+if [[ "${WANDB_ENABLED}" == "true" ]]; then
+  python - <<'PY'
+import os
+print(f"W&B project: {os.environ.get('WANDB_PROJECT', '<unset>')}")
+print(f"W&B entity: {os.environ.get('WANDB_ENTITY', '<unset>')}")
+print(f"W&B mode: {os.environ.get('WANDB_MODE', 'online')}")
+PY
+fi
+
+start_gpu_filler
 
 if [[ "${TRAIN_RECIPE}" == "simple_two_stage" ]]; then
   SIMPLE_STAGE1_EXP_NAME="${EXP_NAME}_warmup"
@@ -472,7 +615,7 @@ else
   build_train_args TRAIN_ARGS \
     "${EXP_NAME}" \
     "${NUM_TRAIN_STEPS}" \
-    "${BASE_MODEL_DIR}" \
+    "${INIT_WEIGHT_PATH}" \
     "${WANDB_ENABLED}" \
     "${RESUME}" \
     "" \

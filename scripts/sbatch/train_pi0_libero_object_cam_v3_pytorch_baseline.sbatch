@@ -1,0 +1,74 @@
+#!/bin/bash
+#SBATCH --job-name=pi0_obj_v3_baseline
+#SBATCH --output=/scratch/%u/openpi_cam/log/pi0_libero_object_ft/slurm-%j.out
+#SBATCH --error=/scratch/%u/openpi_cam/log/pi0_libero_object_ft/slurm-%j.err
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=256G
+#SBATCH --time=08:00:00
+#SBATCH --account=torch_pr_69_tandon_advanced
+#SBATCH --partition=h100_tandon,h200_tandon
+#SBATCH --gres=gpu:4
+#SBATCH --export=ALL
+
+set -euo pipefail
+
+resolve_repo_root() {
+  local candidate
+  local script_root=""
+
+  if script_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd); then
+    :
+  else
+    script_root=""
+  fi
+
+  for candidate in "${REPO_ROOT:-}" "${OPENPI_CAM_ROOT:-}" "${SLURM_SUBMIT_DIR:-}" "${PWD:-}" "${script_root}"; do
+    [[ -n "${candidate}" ]] || continue
+    while [[ "${candidate}" != "/" ]]; do
+      if [[ -f "${candidate}/scripts/env/activate_env.sh" ]]; then
+        printf '%s\n' "${candidate}"
+        return 0
+      fi
+      candidate=$(dirname -- "${candidate}")
+    done
+  done
+
+  return 1
+}
+
+if [[ -z "${REPO_ROOT:-}" ]]; then
+  REPO_ROOT="$(resolve_repo_root || true)"
+fi
+if [[ -z "${REPO_ROOT}" && -d "/scratch/${USER}/openpi_cam" ]]; then
+  REPO_ROOT="/scratch/${USER}/openpi_cam"
+fi
+if [[ -z "${REPO_ROOT}" ]]; then
+  echo "Unable to locate repo root." >&2
+  exit 1
+fi
+
+export USE_CAM=true
+export CONFIG_NAME=pi0_libero_object_pytorch_baseline
+export TRAIN_RECIPE=single_stage
+export WANDB_ENABLED="${WANDB_ENABLED:-true}"
+export WANDB_ENTITY="${WANDB_ENTITY:-NYU-robotics}"
+export WANDB_PROJECT="${WANDB_PROJECT:-openpi_cam}"
+export WANDB_DIR="${WANDB_DIR:-/scratch/yz11445/wandb}"
+export WANDB_CONFIG_DIR="${WANDB_CONFIG_DIR:-/scratch/yz11445/.config/wandb}"
+export WANDB_CACHE_DIR="${WANDB_CACHE_DIR:-/scratch/yz11445/.cache/wandb}"
+export HF_LEROBOT_HOME="${HF_LEROBOT_HOME:-/scratch/yz11445/.huggingface/lerobot}"
+export DATASET_DIR="${DATASET_DIR:-/scratch/yz11445/cam-aware-data/libero_object_cam_v3}"
+export NUM_GPUS="${NUM_GPUS:-4}"
+export NUM_WORKERS="${NUM_WORKERS:-16}"
+export BATCH_SIZE="${BATCH_SIZE:-32}"
+export NUM_TRAIN_STEPS="${NUM_TRAIN_STEPS:-30000}"
+export SAVE_INTERVAL="${SAVE_INTERVAL:-1000}"
+export KEEP_PERIOD="${KEEP_PERIOD:-5000}"
+
+export DATASET_REPO_ID="${DATASET_REPO_ID:-glbreeze/libero_object_cam_v3}"
+export NORM_ASSET_ID=glbreeze/libero_object_cam_v3
+export EXP_NAME="${EXP_NAME:-pi0_libero_object_cam_v3_pytorch_baseline_v1}"
+
+exec bash "${REPO_ROOT}/scripts/sbatch/train_pi0_libero_object_ft.sbatch"

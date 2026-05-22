@@ -49,6 +49,10 @@ class RealRobotUR5Inputs(transforms.DataTransformFn):
                 prompt = prompt.decode("utf-8")
             inputs["prompt"] = prompt
 
+        for key in ("pi3x_target_xy", "pi3x_target_logz", "pi3x_target_conf"):
+            if key in data:
+                inputs[key] = data[key]
+
         return inputs
 
 

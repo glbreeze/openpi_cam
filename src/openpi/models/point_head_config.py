@@ -20,6 +20,12 @@ class AuxPointHeadConfig:
     qk_norm: bool = True
     init_values: float = 0.01
     loss_weight: float = 1.0  # scalar weight on the point distillation loss.
+    # How Pi3X confidence controls per-patch supervision:
+    # - "hard": keep only conf > threshold, all surviving patches weight equally.
+    # - "soft": weight every patch by conf.
+    # - "hybrid": keep only conf > threshold, then weight surviving patches by conf.
+    conf_weight_mode: str = "soft"
+    conf_threshold: float = 0.1
     # 16 -> patch-level prediction (matches the avg-pooled cache; cheap).
     # 224 -> Pi3X-matched full-resolution prediction with a ConvHead-style upsampler
     # (heavier; pair with `cache_pi3x_targets.py --output-resolution 224`).

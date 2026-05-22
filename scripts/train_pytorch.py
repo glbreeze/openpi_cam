@@ -29,10 +29,13 @@ import logging
 import os
 import platform
 import shutil
+import threading
 import time
+from collections import deque
 
 import jax
 import numpy as np
+import pynvml
 import safetensors.torch
 import torch
 import torch.distributed as dist
@@ -45,6 +48,180 @@ import openpi.models_pytorch.pi0_pytorch
 import openpi.shared.normalize as _normalize
 import openpi.training.config as _config
 import openpi.training.data_loader as _data
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    logging.warning("Invalid %s=%r; falling back to default=%s", name, raw_value, default)
+    return default
+
+
+def _get_ddp_find_unused_parameters_default(config: _config.TrainConfig) -> bool:
+    del config
+    return _env_flag("OPENPI_DDP_FIND_UNUSED_PARAMETERS", True)
+
+
+def _get_resume_weights_only_default() -> bool:
+    return _env_flag("OPENPI_RESUME_WEIGHTS_ONLY", False)
+
+
+class GPUUsageMonitor:
+    """Background GPU utilization monitor for rank-0 diagnostics."""
+
+    def __init__(self, *, interval_sec: float, warn_threshold: float | None, rolling_window: int):
+        self._interval_sec = max(interval_sec, 1.0)
+        self._warn_threshold = warn_threshold
+        self._rolling_window = max(rolling_window, 1)
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._handles = []
+        self._gpu_indices: list[int] = []
+        self._history: dict[int, deque[float]] = {}
+        self._latest_stats: dict[int, dict[str, float]] = {}
+        self._nvml_initialized = False
+
+    def start(self):
+        try:
+            pynvml.nvmlInit()
+        except pynvml.NVMLError as exc:
+            logging.warning("GPU monitor disabled: NVML init failed: %s", exc)
+            return
+
+        try:
+            self._gpu_indices = self._resolve_visible_gpu_indices()
+            for gpu_index in self._gpu_indices:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_index)
+                self._handles.append((gpu_index, handle))
+                self._history[gpu_index] = deque(maxlen=self._rolling_window)
+        except pynvml.NVMLError as exc:
+            logging.warning("GPU monitor disabled: failed to enumerate GPUs: %s", exc)
+            pynvml.nvmlShutdown()
+            return
+
+        self._nvml_initialized = True
+        self._thread = threading.Thread(target=self._run, name="gpu-usage-monitor", daemon=True)
+        self._thread.start()
+        logging.info(
+            "Started GPU monitor: interval=%.1fs rolling_window=%d warn_threshold=%s visible_gpus=%s",
+            self._interval_sec,
+            self._rolling_window,
+            self._warn_threshold if self._warn_threshold is not None else "disabled",
+            self._gpu_indices,
+        )
+
+    def stop(self):
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=self._interval_sec + 2.0)
+        if self._nvml_initialized:
+            try:
+                pynvml.nvmlShutdown()
+            except pynvml.NVMLError:
+                pass
+            self._nvml_initialized = False
+
+    def latest_summary(self) -> dict[str, float]:
+        with self._lock:
+            summary: dict[str, float] = {}
+            for gpu_index, stats in self._latest_stats.items():
+                summary[f"gpu{gpu_index}_util"] = stats["util"]
+                summary[f"gpu{gpu_index}_mem_util"] = stats["mem_util"]
+                summary[f"gpu{gpu_index}_util_avg"] = stats["util_avg"]
+            return summary
+
+    def format_latest_summary(self) -> str:
+        summary = self.latest_summary()
+        if not summary:
+            return "gpu_monitor=no_samples_yet"
+
+        parts = []
+        for gpu_index in self._gpu_indices:
+            util = summary.get(f"gpu{gpu_index}_util")
+            mem_util = summary.get(f"gpu{gpu_index}_mem_util")
+            util_avg = summary.get(f"gpu{gpu_index}_util_avg")
+            if util is None or mem_util is None or util_avg is None:
+                continue
+            parts.append(f"gpu{gpu_index}=util:{util:.1f}% mem:{mem_util:.1f}% avg:{util_avg:.1f}%")
+        return "gpu_monitor " + " ".join(parts)
+
+    def _resolve_visible_gpu_indices(self) -> list[int]:
+        cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+        if cuda_visible_devices:
+            indices = []
+            for token in cuda_visible_devices.split(","):
+                token = token.strip()
+                if not token:
+                    continue
+                if token.isdigit():
+                    indices.append(int(token))
+            if indices:
+                return indices
+
+        return list(range(pynvml.nvmlDeviceGetCount()))
+
+    def _run(self):
+        warned_gpu_indices: set[int] = set()
+        while not self._stop_event.wait(self._interval_sec):
+            sampled_stats = {}
+            try:
+                for gpu_index, handle in self._handles:
+                    util_rates = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                    util = float(util_rates.gpu)
+                    mem_util = float(util_rates.memory)
+                    history = self._history[gpu_index]
+                    history.append(util)
+                    util_avg = float(sum(history) / len(history))
+                    sampled_stats[gpu_index] = {
+                        "util": util,
+                        "mem_util": mem_util,
+                        "util_avg": util_avg,
+                    }
+
+                    if (
+                        self._warn_threshold is not None
+                        and len(history) == history.maxlen
+                        and util_avg < self._warn_threshold
+                        and gpu_index not in warned_gpu_indices
+                    ):
+                        logging.warning(
+                            "GPU %d rolling utilization average is low: avg=%.1f%% threshold=%.1f%% window=%d",
+                            gpu_index,
+                            util_avg,
+                            self._warn_threshold,
+                            history.maxlen,
+                        )
+                        warned_gpu_indices.add(gpu_index)
+                    elif self._warn_threshold is not None and util_avg >= self._warn_threshold:
+                        warned_gpu_indices.discard(gpu_index)
+            except pynvml.NVMLError as exc:
+                logging.warning("GPU monitor sampling failed: %s", exc)
+                continue
+
+            with self._lock:
+                self._latest_stats = sampled_stats
+
+
+def create_gpu_usage_monitor() -> GPUUsageMonitor | None:
+    if not _env_flag("OPENPI_MONITOR_GPU_USAGE", True):
+        return None
+
+    interval_sec = float(os.environ.get("OPENPI_GPU_MONITOR_INTERVAL_SEC", "30"))
+    rolling_window = int(os.environ.get("OPENPI_GPU_MONITOR_WINDOW", "8"))
+    warn_threshold_raw = os.environ.get("OPENPI_GPU_MONITOR_WARN_THRESHOLD", "50")
+    warn_threshold = None if warn_threshold_raw.strip().lower() in {"", "none", "off"} else float(warn_threshold_raw)
+    return GPUUsageMonitor(
+        interval_sec=interval_sec,
+        warn_threshold=warn_threshold,
+        rolling_window=rolling_window,
+    )
 
 
 def init_logging():
@@ -174,6 +351,28 @@ def get_model_named_parameters(model):
         model.module.named_parameters()
         if isinstance(model, torch.nn.parallel.DistributedDataParallel)
         else model.named_parameters()
+    )
+
+
+def get_raw_model(model):
+    """Get the underlying model module, unwrapping DDP if needed."""
+    return model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
+
+
+def load_safetensors_state_dict_into_model(
+    model,
+    safetensors_path,
+    *,
+    strict: bool = True,
+    load_device: str | int = "cpu",
+):
+    """Load a safetensors checkpoint into a model, preserving shared tensors."""
+    model_to_load = get_raw_model(model)
+    return safetensors.torch.load_model(
+        model_to_load,
+        safetensors_path,
+        strict=strict,
+        device=load_device,
     )
 
 
@@ -387,6 +586,7 @@ def save_checkpoint(model, optimizer, global_step, config, is_main, data_config)
             "global_step": global_step,
             "config": dataclasses.asdict(config),
             "timestamp": time.time(),
+            "world_size": dist.get_world_size() if dist.is_initialized() else 1,
         }
         torch.save(metadata, tmp_ckpt_dir / "metadata.pt")
 
@@ -408,7 +608,7 @@ def save_checkpoint(model, optimizer, global_step, config, is_main, data_config)
             wandb.log({"checkpoint_step": global_step}, step=global_step)
 
 
-def load_checkpoint(model, optimizer, checkpoint_dir, device):
+def load_checkpoint(model, optimizer, checkpoint_dir, device, *, weights_only: bool = False):
     """Load the latest checkpoint and return the global step."""
     checkpoint_steps = [
         int(d.name)
@@ -429,13 +629,31 @@ def load_checkpoint(model, optimizer, checkpoint_dir, device):
         log_memory_usage(device, latest_step, "before_loading_checkpoint")
 
     try:
+        metadata_path = ckpt_dir / "metadata.pt"
+        logging.info("Loading metadata...")
+        metadata = torch.load(metadata_path, map_location=device, weights_only=False)
+        global_step = metadata.get("global_step", latest_step)
+        checkpoint_world_size = metadata.get("world_size")
+        del metadata
+        torch.cuda.empty_cache()
+        gc.collect()
+        log_memory_usage(device, latest_step, "after_loading_metadata")
+
         # Load model state with error handling
         logging.info("Loading model state...")
         safetensors_path = ckpt_dir / "model.safetensors"
 
         if safetensors_path.exists():
-            model_to_load = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
-            safetensors.torch.load_model(model_to_load, safetensors_path, device=str(device))
+            missing, unexpected = load_safetensors_state_dict_into_model(
+                model,
+                safetensors_path,
+                strict=True,
+                load_device="cpu",
+            )
+            if missing or unexpected:
+                raise RuntimeError(
+                    f"Checkpoint load produced mismatched keys: missing={missing}, unexpected={unexpected}"
+                )
             logging.info("Loaded model state from safetensors format")
         else:
             raise FileNotFoundError(f"No model checkpoint found at {ckpt_dir}")
@@ -444,30 +662,30 @@ def load_checkpoint(model, optimizer, checkpoint_dir, device):
         gc.collect()
         log_memory_usage(device, latest_step, "after_loading_model")
 
-        # Load optimizer state with error handling
-        logging.info("Loading optimizer state...")
-        optimizer_path = ckpt_dir / "optimizer.pt"
-
-        if optimizer_path.exists():
-            optimizer_state_dict = torch.load(optimizer_path, map_location=device, weights_only=False)
-            logging.info("Loaded optimizer state from pt format")
+        if weights_only:
+            logging.warning(
+                "Resuming from step %s with model weights only; optimizer state will be reinitialized. "
+                "checkpoint_world_size=%s current_world_size=%s",
+                global_step,
+                checkpoint_world_size if checkpoint_world_size is not None else "unknown",
+                dist.get_world_size() if dist.is_initialized() else 1,
+            )
         else:
-            raise FileNotFoundError(f"No optimizer checkpoint found at {ckpt_dir}")
+            # Load optimizer state with error handling
+            logging.info("Loading optimizer state...")
+            optimizer_path = ckpt_dir / "optimizer.pt"
 
-        optimizer.load_state_dict(optimizer_state_dict)
-        del optimizer_state_dict
-        torch.cuda.empty_cache()
-        gc.collect()
-        log_memory_usage(device, latest_step, "after_loading_optimizer")
+            if optimizer_path.exists():
+                optimizer_state_dict = torch.load(optimizer_path, map_location=device, weights_only=False)
+                logging.info("Loaded optimizer state from pt format")
+            else:
+                raise FileNotFoundError(f"No optimizer checkpoint found at {ckpt_dir}")
 
-        # Load metadata
-        logging.info("Loading metadata...")
-        metadata = torch.load(ckpt_dir / "metadata.pt", map_location=device, weights_only=False)
-        global_step = metadata.get("global_step", latest_step)
-        del metadata
-        torch.cuda.empty_cache()
-        gc.collect()
-        log_memory_usage(device, latest_step, "after_loading_metadata")
+            optimizer.load_state_dict(optimizer_state_dict)
+            del optimizer_state_dict
+            torch.cuda.empty_cache()
+            gc.collect()
+            log_memory_usage(device, latest_step, "after_loading_optimizer")
 
         logging.info(f"Successfully loaded all checkpoint components from step {latest_step}")
         return global_step
@@ -519,6 +737,9 @@ def log_memory_usage(device, step, phase="unknown"):
 def train_loop(config: _config.TrainConfig):
     use_ddp, local_rank, device = setup_ddp()
     is_main = (not use_ddp) or (dist.get_rank() == 0)
+    gpu_monitor = create_gpu_usage_monitor() if is_main else None
+    if gpu_monitor is not None:
+        gpu_monitor.start()
     set_seed(config.seed, local_rank)
 
     # Initialize checkpoint directory and wandb
@@ -615,10 +836,17 @@ def train_loop(config: _config.TrainConfig):
         logging.info("Enabled memory optimizations for 8+ GPU training")
 
     if use_ddp:
+        ddp_find_unused_parameters = _get_ddp_find_unused_parameters_default(config)
+        logging.info(
+            "DDP config: find_unused_parameters=%s gradient_as_bucket_view=%s static_graph=%s",
+            ddp_find_unused_parameters,
+            True,
+            world_size >= 8,
+        )
         model = torch.nn.parallel.DistributedDataParallel(
             model,
             device_ids=[device.index] if device.type == "cuda" else None,
-            find_unused_parameters=True,  # Disable for memory efficiency
+            find_unused_parameters=ddp_find_unused_parameters,
             gradient_as_bucket_view=True,  # Enable for memory efficiency
             static_graph=world_size >= 8,  # Enable for 8+ GPUs
         )
@@ -629,10 +857,11 @@ def train_loop(config: _config.TrainConfig):
 
         model_path = os.path.join(config.pytorch_weight_path, "model.safetensors")
 
-        missing, unexpected = safetensors.torch.load_model(
-            (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model),
+        missing, unexpected = load_safetensors_state_dict_into_model(
+            model,
             model_path,
             strict=False,  # ----- change to non strict load ------
+            load_device="cpu",
         )
 
         logging.info(f"Loaded PyTorch weights from {config.pytorch_weight_path}")
@@ -665,7 +894,9 @@ def train_loop(config: _config.TrainConfig):
     # Load checkpoint if resuming
     global_step = 0
     if resuming:
-        global_step = load_checkpoint(model, optim, config.checkpoint_dir, device)
+        resume_weights_only = _get_resume_weights_only_default()
+        logging.info("Resume config: weights_only=%s", resume_weights_only)
+        global_step = load_checkpoint(model, optim, config.checkpoint_dir, device, weights_only=resume_weights_only)
         logging.info(f"Resumed training from step {global_step}")
 
     def lr_schedule(step: int):
@@ -708,7 +939,8 @@ def train_loop(config: _config.TrainConfig):
         if is_main
         else None
     )
-    preview_logged = resuming or (not config.wandb_enabled)
+    preview_images_enabled = config.wandb_enabled and _env_flag("OPENPI_LOG_PREVIEW_IMAGES", False)
+    preview_logged = resuming or (not preview_images_enabled)
 
     while global_step < config.num_train_steps:
         # Set epoch for distributed training
@@ -805,11 +1037,14 @@ def train_loop(config: _config.TrainConfig):
                     vals = [info[key] for info in infos if key in info]
                     if vals:
                         avg_extra_metrics[key] = sum(vals) / len(vals)
-                logging.info(
+                base_message = (
                     f"step={global_step} loss={avg_loss:.4f} lr={avg_lr:.2e} grad_norm={avg_grad_norm:.2f} time={elapsed:.1f}s"
                     if avg_grad_norm is not None
                     else f"step={global_step} loss={avg_loss:.4f} lr={avg_lr:.2e} time={elapsed:.1f}s"
                 )
+                if gpu_monitor is not None:
+                    base_message = f"{base_message} | {gpu_monitor.format_latest_summary()}"
+                logging.info(base_message)
                 if avg_extra_metrics:
                     logging.info(
                         "loss_breakdown "
@@ -827,6 +1062,8 @@ def train_loop(config: _config.TrainConfig):
                     if avg_grad_norm is not None:
                         log_payload["grad_norm"] = avg_grad_norm
                     log_payload.update(avg_extra_metrics)
+                    if gpu_monitor is not None:
+                        log_payload.update(gpu_monitor.latest_summary())
                     wandb.log(log_payload, step=global_step)
 
                 start_time = time.time()
@@ -851,6 +1088,8 @@ def train_loop(config: _config.TrainConfig):
     if is_main and config.wandb_enabled:
         wandb.finish()
 
+    if gpu_monitor is not None:
+        gpu_monitor.stop()
     cleanup_ddp()
 
 

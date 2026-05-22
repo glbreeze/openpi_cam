@@ -11,7 +11,7 @@ Config name:
 
 Default view selection:
 
-- base image: `observation.images.context_top_rgb`
+- base image: `observation.images.context_left_rgb`
 - wrist image: `observation.images.wrist_right_rgb`
 
 The config trains the plain baseline pi0 model:

@@ -48,6 +48,29 @@ def _get_local_geo_root() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parents[4]
 
 
+def _get_openpi_cache_root() -> pathlib.Path:
+    for env_name in ("OPENPI_CACHE_DIR", "OPENPI_DATA_HOME"):
+        env_root = os.environ.get(env_name)
+        if env_root:
+            return pathlib.Path(env_root).expanduser().resolve()
+    return LOCAL_GEO_ROOT / ".cache" / "openpi"
+
+
+def _get_pi3x_targets_root(dataset_name: str, *, resolution: int | None = None) -> str:
+    if resolution is None:
+        override_env = "OPENPI_PI3X_TARGETS_BASE_DIR"
+        default_subdir = "pi3x_targets"
+    else:
+        override_env = f"OPENPI_PI3X_TARGETS_{resolution}_BASE_DIR"
+        default_subdir = f"pi3x_targets_{resolution}"
+
+    base_dir = os.environ.get(override_env)
+    if base_dir:
+        return str(pathlib.Path(base_dir).expanduser().resolve() / dataset_name)
+
+    return str((_get_openpi_cache_root() / default_subdir / dataset_name).resolve())
+
+
 LOCAL_GEO_ROOT = _get_local_geo_root()
 
 
@@ -88,6 +111,14 @@ class DataConfig:
     # Optional LeRobot video decoder backend override. Useful when the default
     # `torchcodec` backend is unavailable in the runtime environment.
     video_backend: str | None = None
+    # Optional subset of LeRobot video keys to decode per sample. Useful when a
+    # dataset stores many cameras but the active training config consumes only a
+    # strict subset of them.
+    selected_video_keys: Sequence[str] = ()
+    # Optional root for a predecoded array-backed video cache. When set, the
+    # loader can read frames directly from `.npy` arrays instead of seeking and
+    # decoding source mp4 files in the hot path.
+    predecoded_video_cache_root: str | None = None
     # Directory within the assets directory containing the data assets.
     asset_id: str | None = None
     # Contains precomputed normalization stats. If None, normalization will not be performed.
@@ -433,6 +464,49 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
 
 
 @dataclasses.dataclass(frozen=True)
+class LeRobotRobocasaDataConfig(DataConfigFactory):
+    # Optional local on-disk root of the LeRobot-format dataset.
+    local_dataset_root: str | None = dataclasses.field(
+        default_factory=lambda: os.environ.get("OPENPI_ROBOCASA_DATASET_DIR")
+    )
+    # Whether to forward per-camera intrinsics/extrinsics into the sample.
+    include_cam_extrinsics: bool = False
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_structure = {
+            "observation/image": "observation.images.robot0_agentview_left",
+            "observation/wrist_image": "observation.images.robot0_eye_in_hand",
+            "observation/state": "observation.state",
+            "actions": "action",
+        }
+        if self.include_cam_extrinsics:
+            repack_structure.update(
+                {
+                    "observation/agent_extrinsic": "observation.agentview_left_extrinsic",
+                    "observation/wrist_extrinsic": "observation.eye_in_hand_extrinsic",
+                    "observation/agent_intrinsic": "observation.agentview_left_intrinsic",
+                    "observation/wrist_intrinsic": "observation.eye_in_hand_intrinsic",
+                }
+            )
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            local_dataset_root=(
+                str(pathlib.Path(self.local_dataset_root).expanduser().resolve())
+                if self.local_dataset_root
+                else None
+            ),
+            repack_transforms=_transforms.Group(inputs=[_transforms.RepackTransform(repack_structure)]),
+            data_transforms=_transforms.Group(
+                inputs=[libero_policy.LiberoInputs(model_type=model_config.model_type)],
+                outputs=[libero_policy.LiberoOutputs()],
+            ),
+            model_transforms=ModelTransformFactory()(model_config),
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class LeRobotRealRobotUR5DataConfig(DataConfigFactory):
     # Absolute UR5 joint targets should be converted to deltas while keeping the
     # gripper absolute.
@@ -443,25 +517,42 @@ class LeRobotRealRobotUR5DataConfig(DataConfigFactory):
     # Local on-disk root of the LeRobot-format dataset.
     local_dataset_root: str = "/scratch/yz11445/real_robot_data/ur5_lab_test_tube_camera_shifts"
     # Which third-person camera stream to use as the baseline "base" image.
-    base_camera_key: str = "observation.images.context_top_rgb"
+    base_camera_key: str = "observation.images.context_left_rgb"
     # Which wrist camera stream to use as the baseline wrist image.
     wrist_camera_key: str = "observation.images.wrist_right_rgb"
+    # Optional cached Pi3X targets keyed by (episode_index, frame_index).
+    pi3x_targets_root: str | None = None
+    # Optional root of a predecoded array cache. Defaults to env override so the
+    # training config stays unchanged unless the cache actually exists.
+    predecoded_video_cache_root: str | None = dataclasses.field(
+        default_factory=lambda: os.environ.get("OPENPI_UR5_PREDECODED_CACHE_DIR")
+    )
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
-        repack_transform = _transforms.Group(
-            inputs=[
-                _transforms.RepackTransform(
-                    {
-                        "observation/base_image": self.base_camera_key,
-                        "observation/wrist_image": self.wrist_camera_key,
-                        "observation/state": "observation.state",
-                        "actions": "action",
-                        "prompt": "prompt",
-                    }
+        repack_structure = {
+            "observation/base_image": self.base_camera_key,
+            "observation/wrist_image": self.wrist_camera_key,
+            "observation/state": "observation.state",
+            "actions": "action",
+            "prompt": "prompt",
+        }
+        if self.pi3x_targets_root is not None:
+            repack_structure["episode_index"] = "episode_index"
+            repack_structure["frame_index"] = "frame_index"
+
+        repack_inputs = [_transforms.RepackTransform(repack_structure)]
+        if self.pi3x_targets_root is not None:
+            repack_inputs.append(
+                libero_policy.Pi3xLiberoTargetLoader(
+                    root=self.pi3x_targets_root,
+                    cam_to_npz_subdir=(
+                        ("base", "agent"),
+                        ("left_wrist", "right_wrist"),
+                    ),
                 )
-            ]
-        )
+            )
+        repack_transform = _transforms.Group(inputs=repack_inputs)
 
         data_transforms = _transforms.Group(
             inputs=[real_robot_policy.RealRobotUR5Inputs(model_type=model_config.model_type)],
@@ -480,6 +571,15 @@ class LeRobotRealRobotUR5DataConfig(DataConfigFactory):
             self.create_base_config(assets_dirs, model_config),
             local_dataset_root=self.local_dataset_root,
             video_backend="pyav",
+            selected_video_keys=(
+                self.base_camera_key,
+                self.wrist_camera_key,
+            ),
+            predecoded_video_cache_root=(
+                str(pathlib.Path(self.predecoded_video_cache_root).expanduser().resolve())
+                if self.predecoded_video_cache_root
+                else None
+            ),
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
@@ -887,7 +987,7 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
             include_cam_extrinsics=True,
-            pi3x_targets_root=str(pathlib.Path("~/.cache/openpi/pi3x_targets/libero_object_cam_v3").expanduser()),
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3"),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
@@ -922,9 +1022,7 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
             include_cam_extrinsics=True,
-            pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
-            ),
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3", resolution=224),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
@@ -967,9 +1065,7 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
             include_cam_extrinsics=True,
-            pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
-            ),
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3", resolution=224),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=5_000,
@@ -1033,9 +1129,59 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
             include_cam_extrinsics=True,
-            pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3", resolution=224),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=5_000,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+        trainable_prefixes=(
+            "cross_view_fusion",
+            "ray_embed",
+            "aux_point_head",
+        ),
+    ),
+    # Stage 1 variant for the decoupled fg+hard-loss experiment. Keeps the
+    # original fg topology while restoring the original hard confidence gate
+    # (`conf > 0.1`) for the Pi3X aux distillation loss, but leaves ray_embed
+    # at its default zero-init instead of warm-starting from Pi3X.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage1_pi3xray_hard",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
             ),
+            disable_geometric_augs=True,
+            action_loss_weight=0.1,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=1.0,
+                conf_weight_mode="hard",
+                conf_threshold=0.1,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_v3",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_v3",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3", resolution=224),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=5_000,
@@ -1087,9 +1233,113 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
             include_cam_extrinsics=True,
-            pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3", resolution=224),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=5_000,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+        trainable_prefixes=(
+            "cross_view_fusion",
+            "ray_embed",
+            "aux_point_head",
+        ),
+    ),
+    # Stage 1 variant for the decoupled fgfg+hard-loss experiment. Mirrors the
+    # fgfg-aligned warm-start recipe, but uses the original hard confidence gate
+    # (`conf > 0.1`) for the Pi3X aux distillation loss.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage1_fgfg_pi3xray_hard",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fgfg",
+                prope_layer_idx=(0, 1),
             ),
+            disable_geometric_augs=True,
+            action_loss_weight=0.1,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=1.0,
+                conf_weight_mode="hard",
+                conf_threshold=0.1,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=str(
+                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
+            ),
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_v3",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_v3",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3", resolution=224),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=5_000,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+        trainable_prefixes=(
+            "cross_view_fusion",
+            "ray_embed",
+            "aux_point_head",
+        ),
+    ),
+    # Stage 1 variant for the decoupled fg+hybrid-loss experiment. Keeps the
+    # original fg topology while using hybrid confidence weighting: drop
+    # conf <= 0.1, and weight surviving patches by conf.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage1_pi3xray_hybrid",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=0.1,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=1.0,
+                conf_weight_mode="hybrid",
+                conf_threshold=0.1,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=str(
+                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
+            ),
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_v3",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_v3",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3", resolution=224),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=5_000,
@@ -1133,14 +1383,97 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
             include_cam_extrinsics=True,
-            pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
-            ),
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3", resolution=224),
         ),
         # IMPORTANT: replace this with the actual Stage 1 final checkpoint path before
         # launching Stage 2, e.g.:
         #   "/path/to/openpi/checkpoints/.../<exp_name>_s1/5000"
         # Override from the CLI with `--pytorch_weight_path <path>`.
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    # Stage 2 variant for the decoupled fg+hard-loss experiment. This isolates
+    # the loss change while keeping the original fg topology and the zero-init
+    # ray_embed setup from its paired Stage 1 run.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage2_hard",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=0.05,
+                conf_weight_mode="hard",
+                conf_threshold=0.1,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_v3",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_v3",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3", resolution=224),
+        ),
+        # As with the base stage2 recipe, override --pytorch_weight_path with the
+        # actual Stage 1 checkpoint at launch time.
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    # Stage 2 variant for the decoupled fg+hybrid-loss experiment. This isolates
+    # the loss change while keeping the original fg topology.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage2_hybrid",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=0.05,
+                conf_weight_mode="hybrid",
+                conf_threshold=0.1,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=str(
+                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
+            ),
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_v3",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_v3",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3", resolution=224),
+        ),
+        # As with the base stage2 recipe, override --pytorch_weight_path with the
+        # actual Stage 1 checkpoint at launch time.
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
     ),
@@ -1181,9 +1514,50 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
             include_cam_extrinsics=True,
-            pi3x_targets_root=str(
-                pathlib.Path("~/.cache/openpi/pi3x_targets_224/libero_object_cam_v3").expanduser()
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3", resolution=224),
+        ),
+        # As with the base stage2 recipe, override --pytorch_weight_path with the
+        # actual Stage 1 checkpoint at launch time.
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    # Stage 2 variant for the decoupled fgfg+hard-loss experiment. This isolates
+    # the architecture change while restoring the original hard confidence gate.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_stage2_fgfg_hard",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fgfg",
+                prope_layer_idx=(0, 1),
             ),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=0.05,
+                conf_weight_mode="hard",
+                conf_threshold=0.1,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=str(
+                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
+            ),
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_object_cam_v3",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_object_cam_v3",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=_get_pi3x_targets_root("libero_object_cam_v3", resolution=224),
         ),
         # As with the base stage2 recipe, override --pytorch_weight_path with the
         # actual Stage 1 checkpoint at launch time.
@@ -1221,6 +1595,60 @@ _CONFIGS = [
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
     ),
+    # Baseline counterpart of `pi0_libero_object_pytorch_baseline` for the
+    # full-suite camera dataset. This preserves the same no-camera-aware-model
+    # settings while swapping only the dataset / norm asset IDs to libero_cam_v2.
+    TrainConfig(
+        name="pi0_libero_cam_v2_pytorch_baseline",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(enabled=False),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_cam_v2",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_cam_v2",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=False,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi0_robocasa24_all24_pytorch_baseline",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(enabled=False),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotRobocasaDataConfig(
+            repo_id="robocasa24/all24_human_camaware",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_robocasa24"),
+                asset_id="robocasa24/all24_human_camaware",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            include_cam_extrinsics=False,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
     TrainConfig(
         name="pi0_ur5_real_robot_pytorch_baseline",
         model=pi0_config.Pi0Config(
@@ -1241,6 +1669,269 @@ _CONFIGS = [
                 asset_id="ur5_lab_test_tube_camera_shifts",
             ),
             base_config=DataConfig(prompt_from_task=True),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi05_ur5_real_robot_pytorch_baseline",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(enabled=False),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotRealRobotUR5DataConfig(
+            repo_id="ur5_lab_test_tube_camera_shifts",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi05_ur5_real_robot"),
+                asset_id="ur5_lab_test_tube_camera_shifts",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi05_base"),
+        num_train_steps=30_000,
+    ),
+    # Two-stage real-robot variant that keeps the newer fg cross-view topology
+    # and Pi3X hard-target supervision, but does not enable PRoPE/ray branches
+    # because the current UR5 dataset does not expose camera intrinsics/extrinsics.
+    TrainConfig(
+        name="pi0_ur5_real_robot_pytorch_cross_attn_fg_distill_stage1_hard",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=0.1,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=1.0,
+                conf_weight_mode="hard",
+                conf_threshold=0.1,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotRealRobotUR5DataConfig(
+            repo_id="ur5_lab_test_tube_camera_shifts",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_ur5_real_robot"),
+                asset_id="ur5_lab_test_tube_camera_shifts",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            pi3x_targets_root=_get_pi3x_targets_root("ur5_lab_test_tube_camera_shifts", resolution=224),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=5_000,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+        trainable_prefixes=(
+            "cross_view_fusion",
+            "aux_point_head",
+        ),
+    ),
+    TrainConfig(
+        name="pi0_ur5_real_robot_pytorch_cross_attn_fg_distill_stage2_hard",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=0.05,
+                conf_weight_mode="hard",
+                conf_threshold=0.1,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotRealRobotUR5DataConfig(
+            repo_id="ur5_lab_test_tube_camera_shifts",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_ur5_real_robot"),
+                asset_id="ur5_lab_test_tube_camera_shifts",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            pi3x_targets_root=_get_pi3x_targets_root("ur5_lab_test_tube_camera_shifts", resolution=224),
+        ),
+        # Override from launch with the Stage 1 checkpoint path.
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    # Pi0.5 counterpart of the fg+hard real-robot two-stage recipe. Keeps the
+    # same cross-view / aux-head structure, zero-init ray path (disabled here),
+    # and Stage 1 freeze curriculum, but swaps the backbone/tokenization to pi0.5
+    # and uses a separate local asset/checkpoint root.
+    TrainConfig(
+        name="pi05_ur5_real_robot_pytorch_cross_attn_fg_distill_stage1_hard",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=0.1,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=1.0,
+                conf_weight_mode="hard",
+                conf_threshold=0.1,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotRealRobotUR5DataConfig(
+            repo_id="ur5_lab_test_tube_camera_shifts",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi05_ur5_real_robot"),
+                asset_id="ur5_lab_test_tube_camera_shifts",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            pi3x_targets_root=_get_pi3x_targets_root("ur5_lab_test_tube_camera_shifts", resolution=224),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi05_base"),
+        num_train_steps=5_000,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+        trainable_prefixes=(
+            "cross_view_fusion",
+            "aux_point_head",
+        ),
+    ),
+    TrainConfig(
+        name="pi05_ur5_real_robot_pytorch_cross_attn_fg_distill_stage2_hard",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=0.05,
+                conf_weight_mode="hard",
+                conf_threshold=0.1,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotRealRobotUR5DataConfig(
+            repo_id="ur5_lab_test_tube_camera_shifts",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi05_ur5_real_robot"),
+                asset_id="ur5_lab_test_tube_camera_shifts",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            pi3x_targets_root=_get_pi3x_targets_root("ur5_lab_test_tube_camera_shifts", resolution=224),
+        ),
+        # Override from launch with the Stage 1 checkpoint path.
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi05_base"),
+        num_train_steps=30_000,
+    ),
+    # Full-suite baseline variant with the same model/data settings as
+    # `pi0_libero_cam_v2_pytorch_baseline`, except PyTorch geometric train-time
+    # image augmentations stay enabled.
+    TrainConfig(
+        name="pi0_libero_cam_v2_pytorch_baseline_geoaug",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
+            disable_geometric_augs=False,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(enabled=False),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_cam_v2",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_cam_v2",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=False,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    # Full-suite camera-aware variant for the 4-suite Libero dataset. This uses
+    # the newer fg cross-view topology with PRoPE+rays and a hard aux-point
+    # confidence gate at conf > 0.1.
+    TrainConfig(
+        name="pi0_libero_cam_v2_pytorch_prope_ray_view_distill_fullres_hard",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=0.05,
+                conf_weight_mode="hard",
+                conf_threshold=0.1,
+                output_resolution=224,
+            ),
+            ray_embed_pi3x_init_path=str(
+                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
+            ),
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_cam_v2",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_cam_v2",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=_get_pi3x_targets_root("libero_cam_v2", resolution=224),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,

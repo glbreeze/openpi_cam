@@ -2,6 +2,7 @@ from collections.abc import Iterator, Sequence
 import logging
 import multiprocessing
 import os
+import pathlib
 import typing
 from typing import Literal, Protocol, SupportsIndex, TypeVar
 
@@ -19,6 +20,8 @@ from openpi.training.droid_rlds_dataset import DroidRldsDataset
 import openpi.transforms as _transforms
 
 T_co = TypeVar("T_co", covariant=True)
+_PREDECODED_VIDEO_ARRAY_CACHE: dict[str, np.ndarray] = {}
+_MISSING_PREDECODED_VIDEO_CACHE_FILES: set[str] = set()
 
 
 class Dataset(Protocol[T_co]):
@@ -154,6 +157,164 @@ class LocalLeRobotDataset(lerobot_dataset.LeRobotDataset):
         return hf_dataset
 
 
+class SelectiveVideoLocalLeRobotDataset(LocalLeRobotDataset):
+    """LeRobot dataset variant that decodes only a configured subset of videos."""
+
+    def __init__(self, *args, selected_video_keys: Sequence[str], **kwargs):
+        super().__init__(*args, **kwargs)
+        selected_video_keys = tuple(selected_video_keys)
+        missing_keys = sorted(set(selected_video_keys) - set(self.meta.video_keys))
+        if missing_keys:
+            raise ValueError(f"selected_video_keys not found in dataset metadata: {missing_keys}")
+        self._selected_video_keys = selected_video_keys
+
+    def _get_query_timestamps(
+        self,
+        current_ts: float,
+        query_indices: dict[str, list[int]] | None = None,
+    ) -> dict[str, list[float]]:
+        query_timestamps = {}
+        for key in self._selected_video_keys:
+            if query_indices is not None and key in query_indices:
+                timestamps = self.hf_dataset.select(query_indices[key])["timestamp"]
+                query_timestamps[key] = torch.stack(timestamps).tolist()
+            else:
+                query_timestamps[key] = [current_ts]
+        return query_timestamps
+
+    def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
+        item = {}
+        for vid_key in self._selected_video_keys:
+            query_ts = query_timestamps[vid_key]
+            video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
+            frames = self._decode_video_frames_with_fallback(video_path, query_ts)
+            item[vid_key] = frames.squeeze(0)
+        return item
+
+    def _decode_video_frames_with_fallback(
+        self, video_path: pathlib.Path, query_ts: list[float]
+    ) -> torch.Tensor:
+        try:
+            return lerobot_dataset.decode_video_frames(video_path, query_ts, self.tolerance_s, self.video_backend)
+        except RuntimeError as exc:
+            default_backend = self.video_backend
+            error_message = str(exc)
+            if (
+                default_backend is None
+                and "Could not load libtorchcodec" in error_message
+            ):
+                logging.warning(
+                    "torchcodec unavailable for %s; falling back to pyav for this worker: %s",
+                    video_path,
+                    error_message.splitlines()[0],
+                )
+                return lerobot_dataset.decode_video_frames(video_path, query_ts, self.tolerance_s, "pyav")
+            raise
+
+    def __getitem__(self, idx) -> dict:
+        item = self.hf_dataset[idx]
+        ep_idx = item["episode_index"].item()
+
+        query_indices = None
+        if self.delta_indices is not None:
+            query_indices, padding = self._get_query_indices(idx, ep_idx)
+            query_result = self._query_hf_dataset(query_indices)
+            item = {**item, **padding}
+            for key, val in query_result.items():
+                item[key] = val
+
+        if self._selected_video_keys:
+            current_ts = item["timestamp"].item()
+            query_timestamps = self._get_query_timestamps(current_ts, query_indices)
+            video_frames = self._query_videos(query_timestamps, ep_idx)
+            item = {**video_frames, **item}
+
+        if self.image_transforms is not None:
+            for cam in self._selected_video_keys:
+                item[cam] = self.image_transforms(item[cam])
+
+        task_idx = item["task_index"].item()
+        item["task"] = self.meta.tasks[task_idx]
+        return item
+
+
+def _load_predecoded_video_array(npy_path: pathlib.Path) -> np.ndarray:
+    cache_key = str(npy_path)
+    array = _PREDECODED_VIDEO_ARRAY_CACHE.get(cache_key)
+    if array is None:
+        array = np.load(npy_path, mmap_mode="r")
+        _PREDECODED_VIDEO_ARRAY_CACHE[cache_key] = array
+    return array
+
+
+class PredecodedVideoLocalLeRobotDataset(SelectiveVideoLocalLeRobotDataset):
+    """LeRobot dataset variant that serves selected videos from predecoded `.npy` arrays."""
+
+    def __init__(self, *args, predecoded_video_cache_root: str | pathlib.Path, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._predecoded_video_cache_root = pathlib.Path(predecoded_video_cache_root)
+
+    def _cache_file_for_video(self, ep_idx: int, vid_key: str) -> pathlib.Path:
+        rel_video_path = pathlib.Path(self.meta.get_video_file_path(ep_idx, vid_key))
+        return self._predecoded_video_cache_root / rel_video_path.with_suffix(".npy")
+
+    def _load_cached_frame(self, cache_file: pathlib.Path, frame_index: int) -> torch.Tensor:
+        frames = _load_predecoded_video_array(cache_file)
+        if frame_index < 0 or frame_index >= frames.shape[0]:
+            raise IndexError(f"Frame index {frame_index} out of bounds for cached video {cache_file}")
+        frame = np.asarray(frames[frame_index])
+        return torch.from_numpy(frame)
+
+    def __getitem__(self, idx) -> dict:
+        item = self.hf_dataset[idx]
+        ep_idx = item["episode_index"].item()
+        current_frame_index = int(item["frame_index"].item())
+
+        query_indices = None
+        if self.delta_indices is not None:
+            query_indices, padding = self._get_query_indices(idx, ep_idx)
+            query_result = self._query_hf_dataset(query_indices)
+            item = {**item, **padding}
+            for key, val in query_result.items():
+                item[key] = val
+
+        video_frames: dict[str, torch.Tensor] = {}
+        fallback_video_keys: list[str] = []
+        for vid_key in self._selected_video_keys:
+            cache_file = self._cache_file_for_video(ep_idx, vid_key)
+            if cache_file.is_file():
+                video_frames[vid_key] = self._load_cached_frame(cache_file, current_frame_index)
+            else:
+                fallback_video_keys.append(vid_key)
+                cache_key = str(cache_file)
+                if cache_key not in _MISSING_PREDECODED_VIDEO_CACHE_FILES:
+                    logging.warning(
+                        "Missing predecoded cache file for %s episode=%s view=%s; falling back to video decode",
+                        self.repo_id,
+                        ep_idx,
+                        vid_key,
+                    )
+                    _MISSING_PREDECODED_VIDEO_CACHE_FILES.add(cache_key)
+
+        if fallback_video_keys:
+            current_ts = item["timestamp"].item()
+            query_timestamps = self._get_query_timestamps(current_ts, query_indices)
+            for vid_key in fallback_video_keys:
+                video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
+                frames = self._decode_video_frames_with_fallback(video_path, query_timestamps[vid_key])
+                video_frames[vid_key] = frames.squeeze(0)
+
+        item = {**video_frames, **item}
+
+        if self.image_transforms is not None:
+            for cam in self._selected_video_keys:
+                item[cam] = self.image_transforms(item[cam])
+
+        task_idx = item["task_index"].item()
+        item["task"] = self.meta.tasks[task_idx]
+        return item
+
+
 def create_torch_dataset(
     data_config: _config.DataConfig, action_horizon: int, model_config: _model.BaseModelConfig
 ) -> Dataset:
@@ -166,6 +327,8 @@ def create_torch_dataset(
 
     dataset_root = data_config.local_dataset_root
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id, root=dataset_root)
+    if data_config.selected_video_keys:
+        logging.info("Restricting decoded video keys for %s to %s", repo_id, tuple(data_config.selected_video_keys))
 
     episodes = None
     if data_config.task_indices:
@@ -188,16 +351,42 @@ def create_torch_dataset(
             len(episodes),
         )
 
-    dataset_cls = LocalLeRobotDataset if dataset_root is not None else lerobot_dataset.LeRobotDataset
-    dataset = dataset_cls(
-        data_config.repo_id,
-        root=dataset_root,
-        episodes=episodes,
-        video_backend=data_config.video_backend,
-        delta_timestamps={
+    dataset_kwargs = {
+        "root": dataset_root,
+        "episodes": episodes,
+        "video_backend": data_config.video_backend,
+        "delta_timestamps": {
             key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
         },
-    )
+    }
+    if dataset_root is not None and data_config.selected_video_keys:
+        cache_root = data_config.predecoded_video_cache_root
+        if cache_root is not None and pathlib.Path(cache_root).exists():
+            logging.info("Using predecoded video cache for %s from %s", repo_id, cache_root)
+            dataset = PredecodedVideoLocalLeRobotDataset(
+                data_config.repo_id,
+                selected_video_keys=data_config.selected_video_keys,
+                predecoded_video_cache_root=cache_root,
+                **dataset_kwargs,
+            )
+        else:
+            if cache_root is not None:
+                logging.warning(
+                    "Predecoded video cache root %s does not exist for %s; falling back to direct video decode",
+                    cache_root,
+                    repo_id,
+                )
+            dataset = SelectiveVideoLocalLeRobotDataset(
+                data_config.repo_id,
+                selected_video_keys=data_config.selected_video_keys,
+                **dataset_kwargs,
+            )
+    else:
+        dataset_cls = LocalLeRobotDataset if dataset_root is not None else lerobot_dataset.LeRobotDataset
+        dataset = dataset_cls(
+            data_config.repo_id,
+            **dataset_kwargs,
+        )
 
     if data_config.prompt_from_task:
         dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset_meta.tasks)])
@@ -494,6 +683,8 @@ class TorchDataLoader:
             num_workers=num_workers,
             multiprocessing_context=mp_context,
             persistent_workers=num_workers > 0,
+            pin_memory=torch.cuda.is_available(),
+            prefetch_factor=4 if num_workers > 0 else None,
             collate_fn=_collate_fn,
             worker_init_fn=_worker_init_fn,
             drop_last=True,

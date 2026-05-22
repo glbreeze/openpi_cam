@@ -5,6 +5,8 @@ will compute the mean and standard deviation of the data in the dataset and save
 to the config assets directory.
 """
 
+import pathlib
+
 import numpy as np
 import tqdm
 import tyro
@@ -110,9 +112,18 @@ def main(config_name: str, max_frames: int | None = None):
 
     norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
 
-    output_path = config.assets_dirs / data_config.repo_id
-    print(f"Writing stats to: {output_path}")
-    normalize.save(output_path, norm_stats)
+    output_paths = [config.assets_dirs / data_config.repo_id]
+
+    assets_cfg = getattr(config.data, "assets", None)
+    assets_dir = getattr(assets_cfg, "assets_dir", None)
+    if assets_dir and data_config.asset_id is not None:
+        mirror_path = pathlib.Path(assets_dir) / data_config.asset_id
+        if mirror_path not in output_paths:
+            output_paths.append(mirror_path)
+
+    for output_path in output_paths:
+        print(f"Writing stats to: {output_path}")
+        normalize.save(output_path, norm_stats)
 
 
 if __name__ == "__main__":
