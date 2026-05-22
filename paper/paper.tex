@@ -1,0 +1,240 @@
+\documentclass{article}
+\newcommand{\todo}[1]{\textcolor{red}{TODO: #1}}
+\usepackage{float} % For [H] table placement
+\usepackage{corl_2026} % Use this for the initial submission.
+\usepackage{booktabs} % For \toprule, \midrule, \bottomrule
+\usepackage{amsmath} % For equations
+\usepackage{amssymb} % For \mathbb
+% \usepackage[final]{corl_2026} % Uncomment for the camera-ready ``final'' version.
+% \usepackage[preprint]{corl_2026} % Uncomment for pre-prints (e.g., arxiv); This is like ``final'', but will remove the CORL footnote.
+
+\title{Grounding Actions with Camera Geometry: A Geometric Interface for Vision-Language-Action Models}
+
+% The \author macro works with any number of authors. There are two
+% commands used to separate the names and addresses of multiple
+% authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to
+% break the lines. Using \AND forces a line break at that point. So,
+% if LaTeX puts 3 of 4 authors names on the first line, and the last
+% on the second line, try using \AND instead of \And before the third
+% author name.
+
+% NOTE: authors will be visible only in the camera-ready and preprint versions (i.e., when using the option 'final' or 'preprint').
+% 	For the initial submission the authors will be anonymized.
+
+\author{
+  Jane E.~Doe\\
+  Department of Electrical Engineering and Computer Sciences\\
+  University of California Berkeley
+  United States\\
+  \texttt{janedoe@berkeley.edu} \\
+  %% examples of more authors
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \AND
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+}
+
+
+\begin{document}
+\maketitle
+
+%===============================================================================
+
+\begin{abstract}
+Vision-language-action (VLA) models have made rapid progress in generalist robot manipulation by transferring semantic knowledge from large pretrained vision-language models. Yet their visual tokens are typically grounded in 2D image coordinates rather than the calibrated geometry of the robot's cameras, leaving a mismatch between semantic recognition and the spatial precision required for manipulation. This limitation is especially pronounced in multi-camera robot setups, where views are often processed as independent images despite being coupled by camera intrinsics and extrinsics. We present a camera-aware geometric interface for VLAs that injects calibrated structure into the visual-token stream. The interface combines intrinsic-conditioned ray embeddings, projective positional encoding, and cross-view fusion before action prediction. To avoid manually annotated dense geometry, we train the new visual pathway with full-resolution Pi3X ray-coordinate and log-depth targets, using teacher confidence to gate the auxiliary distillation loss. Instantiated on $\pi_0$ and evaluated on the four LIBERO suites, our training recipe improves manipulation success, with larger gains on object- and spatially sensitive tasks. We further evaluate the same camera-aware interface on RoboCasa and real-robot manipulation settings. These results suggest that calibrated camera geometry is a useful inductive bias for improving the spatial precision of VLA policies.
+
+\end{abstract}
+
+% Two or three meaningful keywords should be added here
+\keywords{CoRL, Robots, Learning}
+
+%===============================================================================
+
+\section{Introduction}
+
+Vision-language-action (VLA) models map image observations and language instructions to robot actions, and have become a central approach for generalist manipulation. RT-1 demonstrated the value of large-scale robot sequence modeling~\citep{brohan2023rt1}, while RT-2 showed that Internet-scale vision-language model (VLM) pretraining can transfer semantic knowledge to robotic control~\citep{zitkovich2023rt2}. More recent open or flow-based policies such as OpenVLA and $\pi_0$ further establish pretrained vision-language backbones as practical foundations for language-conditioned manipulation~\citep{kim2024openvla,black2025pi0}. These models provide strong semantic visual representations, but their visual interfaces remain largely image-token based. In particular, they typically encode observations as 2D visual tokens and leave camera geometry to be recovered implicitly from policy data.
+
+This design is poorly matched to the spatial requirements of manipulation. A manipulation policy must estimate object pose, contact distance, reachability, occlusion, and the relation between wrist and third-person observations. In multi-camera robot systems, these quantities are constrained by known camera intrinsics and extrinsics. However, when each view is processed primarily as an independent image, the model receives only weak architectural pressure to use the projective relationships between views. The result is a gap between semantic visual understanding, where current VLA backbones are strong, and calibrated spatial reasoning, where precise action prediction depends on metric and cross-view structure.
+
+Prior work in geometric manipulation shows that explicit spatial structure can improve language-conditioned control, from voxelized or multi-view 3D policies to recent spatially grounded VLAs~\citep{shridhar2023peract,goyal2023rvt,zhen2024threedvla,qu2025spatialvla}. These methods make a compelling case for geometry, but they often introduce explicit 3D inputs, altered action representations, or additional spatially grounded training. We instead ask whether calibrated geometry can be added to an existing VLA through a small visual-token interface, while keeping the pretrained semantic backbone and action formulation intact.
+
+We propose a camera-aware geometric interface for VLA policies. The interface has three components. First, intrinsic-conditioned ray embeddings encode the projection ray associated with each image patch. Second, projective positional encoding (PRoPE) injects camera intrinsics and extrinsics into transformer attention~\citep{li2025cameras}. Third, cross-view fusion exchanges information across camera streams before the visual tokens are passed to the action model. Geometry is introduced at the visual-token level, leaving the policy's action space and imitation objective unchanged.
+
+A direct supervision signal for such geometry-aware tokens would normally require dense geometric labels. We avoid this requirement by distilling dense ray-coordinate and log-depth targets from a Pi3X implementation of the $\pi^3$ visual geometry model~\citep{wang2025pi3}. In our $\pi_0$ implementation on LIBERO~\citep{liu2023libero}, an auxiliary point head trains the newly introduced geometry modules with full-resolution teacher targets under a confidence-thresholded squared loss, while the action objective remains the primary policy-learning signal. We evaluate the resulting policy on LIBERO, and use RoboCasa and real-robot experiments to test whether the same camera-aware interface remains useful beyond the initial benchmark setting.
+
+Our contributions are as follows:
+\begin{itemize}
+    \item We formulate calibrated multi-camera geometry as a plug-in visual-token interface for pretrained VLA policies, preserving the original action representation and policy objective.
+    \item We introduce a camera-aware VLA module composed of intrinsic ray embeddings, PRoPE-based geometric attention, and cross-view fusion.
+    \item We propose a Pi3X-distilled training procedure that supervises the new geometry pathway with confidence-gated dense ray-coordinate and log-depth targets, without requiring manually annotated dense geometry.
+\end{itemize}
+
+
+
+
+
+\section{Related Work}
+\paragraph{Vision-language-action models.}
+Vision-language-action (VLA) models have reframed language-conditioned manipulation as sequence modeling over images, text, and robot actions. RT-1 demonstrated that transformer policies can scale across diverse robot data~\citep{brohan2023rt1}, while RT-2 showed that Internet-scale vision-language pretraining can transfer semantic knowledge to robot control~\citep{zitkovich2023rt2}. OpenVLA and $\pi_0$ further make this paradigm practical through open VLA checkpoints and continuous-action flow matching~\citep{kim2024openvla,black2025pi0}. These models provide strong semantic and task-level priors, but their visual interfaces are still largely inherited from 2D vision-language backbones. Camera geometry, when available, is typically left for the policy to infer implicitly from robot demonstrations. Our work is complementary: we keep the pretrained VLA objective and action representation intact, and instead study how calibrated camera geometry can be injected into the visual-token interface.
+
+\paragraph{Structured 3D representations for manipulation.}
+Many manipulation policies improve spatial precision by constructing explicit 3D scene representations. PerAct voxelizes RGB-D observations and predicts actions with a transformer over a 3D workspace~\citep{shridhar2023peract}. RVT improves efficiency by aggregating rendered multi-view observations while preserving 3D cues~\citep{goyal2023rvt}. Act3D lifts 2D visual features into a 3D feature field and performs coarse-to-fine action selection in 3D~\citep{gervet2023act3d}, while PolarNet learns language-conditioned policies directly from 3D point clouds~\citep{chen2023polarnet}. These methods demonstrate the value of geometric structure for manipulation, especially in settings requiring accurate end-effector placement. Our goal is different: rather than replacing the VLA observation interface with voxels, point clouds, or explicit 3D action maps, we expose calibrated geometry inside the visual-token stream of an existing VLA.
+
+\paragraph{Spatially aware VLAs.}
+Recent work has begun to connect VLA policies more directly with 3D or spatial representations. 3D-VLA couples action prediction with 3D world modeling~\citep{zhen2024threedvla}. SpatialVLA introduces spatial encodings and action discretizations designed to improve cross-robot spatial transfer~\citep{qu2025spatialvla}. 3DS-VLA builds a spatially aware VLA using 3D representations for robust multi-task manipulation~\citep{li2025threedsvla}. These systems highlight an important trend: stronger spatial representations can improve the precision and robustness of generalist robot policies. Our method occupies a lighter-weight point in this design space: it uses calibrated camera parameters and teacher-supervised visual tokens to make an RGB-based VLA more geometry-aware, without requiring point clouds, reconstructed scenes, or a new action representation at test time.
+
+\paragraph{Camera-aware representations and geometry distillation.}
+Multi-camera robot platforms often provide calibrated intrinsics and extrinsics, yet policies frequently process each camera stream as an ordinary image. Camera-aware positional encodings offer a direct way to expose this structure to attention layers. Cameras as Relative Positional Encoding formulates camera geometry as a projective positional signal for transformer attention, allowing correspondences across views to be represented through the camera model rather than only through learned appearance statistics~\citep{li2025cameras}. We adapt this idea to VLA manipulation by combining projective positional encoding with intrinsic-conditioned ray embeddings and cross-view fusion.
+
+Supervision is the second challenge: learning geometry-aware tokens with dense metric labels would normally require annotation, depth sensors, or reconstruction. We instead distill full-resolution ray-coordinate and log-depth targets from a visual geometry teacher based on $\pi^3$, which learns permutation-equivariant visual geometry from images~\citep{wang2025pi3}. The auxiliary objective shapes intermediate visual features during training; the teacher is not used by the policy at test time.
+
+
+
+\section{Method}
+\label{sec:method}
+
+\subsection{Problem Formulation}
+We consider language-conditioned manipulation from calibrated multi-camera observations. At each control step, the policy receives a language instruction $l$, proprioceptive state $s_t$, and RGB observations $\{I_t^v\}_{v=1}^{V}$ from $V$ cameras. Each camera has a known intrinsic matrix $K^v$ and extrinsic pose $T^v$ in a common robot or scene reference frame. The policy predicts an action chunk $a_{t:t+H-1}$ in the original VLA action space:
+\begin{equation}
+    \pi_\theta(a_{t:t+H-1}\mid l, s_t, \{I_t^v,K^v,T^v\}_{v=1}^{V}) .
+\end{equation}
+Our goal is not to introduce a new 3D action representation or a reconstructed scene state. Instead, we modify the visual-token interface that connects calibrated RGB observations to a pretrained VLA backbone.
+
+Let $z_p^v\in\mathbb{R}^d$ denote the visual token for patch $p$ in camera view $v$ produced by the base image encoder. Standard VLA finetuning mainly indexes these tokens by their learned 2D positional embedding. Under this representation, identical patch coordinates receive the same positional structure even when they correspond to different physical rays due to changes in focal length, viewpoint, or hand-eye pose. We therefore learn a geometry-aware token map
+\begin{equation}
+    h_{1:P}^{1:V} = F_\psi\left(z_{1:P}^{1:V}, \{K^v,T^v\}_{v=1}^{V}\right),
+\end{equation}
+where $F_\psi$ denotes the proposed camera-aware interface and $P$ is the number of image patches. The resulting tokens retain the semantic features of the pretrained vision-language backbone, but their attention and local features are conditioned on calibrated projection geometry before they are passed to the VLA projector and action model.
+
+\subsection{Camera-Aware Visual Token Interface}
+The interface has three components: intrinsic-conditioned ray embeddings, projective positional encoding, and cross-view fusion. Together they address two sources of geometric ambiguity. Intrinsics determine which camera ray a pixel observes, while extrinsics determine how rays from different views relate in the robot workspace.
+
+\paragraph{Intrinsic ray embeddings.}
+For every image location $u=(x,y,1)^\top$, the camera intrinsic matrix defines a normalized projection ray
+\begin{equation}
+    \tilde{r}^{\,v}(u) = (K^v)^{-1} u .
+\end{equation}
+Because the third coordinate is fixed by the pinhole normalization, the first two components of $\tilde{r}^{\,v}$ specify the image-plane ray coordinate associated with that pixel. We form a dense ray-coordinate map
+\begin{equation}
+    R^v(x,y)=\left[\tilde{r}^{\,v}(x,y,1)\right]_{1:2}\in\mathbb{R}^{2},
+\end{equation}
+and map it to the visual patch grid with a learnable patch embedding $G_\phi$. The ray embedding is added to the patch-token input of the SigLIP vision transformer:
+\begin{equation}
+    x_{0,p}^v = x_{\mathrm{img},p}^v + G_\phi(R^v)_p ,
+\end{equation}
+where $x_{\mathrm{img},p}^v$ is the standard image patch embedding. This placement makes the entire visual encoder, not only a later fusion layer, receive intrinsic-aware tokens. We initialize $G_\phi$ to zero so that the camera-aware model starts from the pretrained VLA's visual behavior and learns camera-dependent corrections during finetuning.
+
+\paragraph{Projective positional encoding.}
+Ray embeddings describe camera-local projection directions, but they do not specify how two views are arranged in a shared frame. We therefore inject camera intrinsics and extrinsics into attention through projective positional encoding (PRoPE)~\citep{li2025cameras}. PRoPE augments image-indexed position cues with a projective signal derived from the calibrated cameras. In our setting, each token is associated with its source view, patch location, intrinsic matrix, and camera pose. The resulting attention features can represent cross-view relations under the camera model rather than relying only on appearance similarity and learned 2D positions.
+
+\paragraph{Cross-view fusion.}
+After the visual encoder produces per-view patch tokens, we apply a cross-view fusion module before the VLA projector. The fusion module alternates two attention patterns. A frame attention block processes tokens within each camera independently, preserving view-local image structure and standard 2D spatial organization. A global attention block then flattens the view and patch dimensions, allowing tokens from all cameras to exchange information. PRoPE is inserted in this cross-view stage, so the residual features added by the fusion block are conditioned on $\{K^v,T^v\}$ rather than on token index alone:
+\begin{equation}
+    H = \mathrm{Fusion}_{\psi}\left(Z;\{K^v,T^v\}_{v=1}^{V}\right),
+\end{equation}
+where $Z$ are the per-view visual tokens and $H$ are the fused tokens. In the main model, the fusion order is frame attention followed by global attention with a PRoPE pose-injection block. This keeps the downstream policy interface unchanged: the action model still receives a sequence of VLA visual tokens, but those tokens have already integrated camera-local rays and calibrated cross-view structure.
+
+\subsection{Geometry Distillation Objective}
+The camera-aware interface introduces new parameters whose useful behavior is spatial rather than purely semantic. Direct dense supervision would normally require depth sensors, reconstruction, or manual geometric labels. We instead train the new pathway with a visual geometry teacher. Offline, a Pi3X implementation of the $\pi^3$ visual geometry model~\citep{wang2025pi3} produces full-resolution targets for each supervised camera view: an image-plane ray-coordinate target $q_p^v\in\mathbb{R}^{2}$, a log-depth target $d_p^v$, and a confidence logit $c_p^v$.
+
+We attach an auxiliary point head to the fused visual tokens before VLA projection. The head predicts dense maps $\hat{q}_p^v$ and $\hat{d}_p^v$ at the teacher-target resolution, but its predictions are used only for training. Teacher confidence is used as a hard reliability gate rather than as a soft regression weight:
+\begin{equation}
+    m_p^v = M^v\mathbf{1}\left[\sigma(c_p^v) > \tau\right],
+\end{equation}
+where $M^v$ indicates that view $v$ is valid in the current observation and $\tau$ is a fixed confidence threshold. The geometry loss is
+\begin{equation}
+    \mathcal{L}_{\mathrm{geo}} =
+    \frac{
+        \sum_{v,p} m_p^v
+        \left(
+            \frac{1}{2}\lVert \hat{q}_p^v - q_p^v \rVert_2^2
+            +
+            (\hat{d}_p^v - d_p^v)^2
+        \right)
+    }{
+        \sum_{v,p} m_p^v + \epsilon
+    } .
+\end{equation}
+The first term supervises the normalized ray-coordinate prediction, and the second term supervises log depth. We use a thresholded squared loss to emphasize spatially reliable teacher predictions while avoiding dependence on teacher confidence calibration beyond the binary gate.
+
+The final objective combines the original policy action loss with the auxiliary geometry loss:
+\begin{equation}
+    \mathcal{L} = \lambda_{\mathrm{act}}\mathcal{L}_{\mathrm{act}}
+    + \lambda_{\mathrm{geo}}\mathcal{L}_{\mathrm{geo}} .
+\end{equation}
+Here $\mathcal{L}_{\mathrm{act}}$ is the unchanged action objective of the base VLA; in our $\pi_0$ instantiation it is the original continuous-action flow-matching loss. We use a short curriculum only to stabilize optimization: an initial geometry-dominant phase updates the camera-aware modules and auxiliary head while keeping the pretrained backbone fixed, followed by action-dominant finetuning of the full policy with the auxiliary loss retained as a regularizer. In the configuration used for our main experiments, the first phase uses a lower action weight and a higher geometry weight, while the second phase restores the action loss and down-weights the auxiliary term. At deployment, the policy consumes RGB images, proprioceptive state, language instruction, and camera calibration; it does not query Pi3X or any teacher targets.
+
+\section{Experiments}
+\label{sec:results}
+
+\subsection{Experimental Setup}
+\todo{Describe benchmark suites, datasets, training checkpoints, evaluation protocol, and success metric.}
+
+\subsection{Main Results}
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lccccccc}
+\toprule
+Suite & Baseline & w/o Ray & w/o PRoPE & 1-Stage & GT-only & Cam (Ours) & Gain \\
+\midrule
+LIBERO-Goal    & 87.4 & 86.6 & 87.4 & 86.8 & \textbf{88.4} & \textbf{88.4} & +1.0 \\
+LIBERO-Spatial & 85.2 & 85.0 & 88.2 & 86.8 & \textbf{89.2} & 88.6 & +3.4 \\
+LIBERO-Object  & 89.4 & 90.2 & 90.6 & 93.6 & \textbf{94.4} & 93.4 & +4.0 \\
+LIBERO-10      & 76.5 & 78.2 & 77.4 & 77.8 & \textbf{80.4} & 77.6 & +1.1 \\
+\midrule
+Average        & 84.6 & 85.0 & 85.9 & 86.3 & \textbf{88.1} & 87.0 & +2.4 \\
+\bottomrule
+\end{tabular}
+\caption{Success rate comparison and ablation results across LIBERO suites. Results are reported in percentage. Average denotes the macro average across the four LIBERO suites. ``w/o Ray'' removes calibrated camera ray embeddings, ``w/o PRoPE'' removes the projective positional encoding, ``1-Stage'' denotes the single-stage training variant, and ``GT-only'' denotes the variant trained with ground-truth geometric supervision only. Gain denotes the absolute improvement of Cam (Ours) over the baseline in percentage points.}
+\label{tab:libero_cam_ablation}
+\end{table}
+
+\subsection{Ablations}
+\todo{Isolate the contribution of ray embeddings, PRoPE, cross-view fusion, and the training curriculum.}
+
+\subsection{Analysis}
+\todo{Add qualitative examples, failure cases, or task-category analysis that explains where camera geometry helps.}
+
+\section{Limitations}
+\label{sec:limitations}
+Our method assumes that camera intrinsics and extrinsics are available and sufficiently accurate. This is natural for many robot platforms and simulation benchmarks, but it makes the method sensitive to calibration drift, camera synchronization errors, and mismatches between the calibration used during training and deployment. The interface also relies on a visual geometry teacher to provide dense ray and log-depth targets during training. Teacher confidence gating reduces the influence of unreliable predictions, but it does not eliminate all teacher bias, especially under occlusion, specular surfaces, thin structures, motion blur, or views where the geometry model has weak priors.
+
+The current approach improves the visual-token representation without changing the action representation or the action-learning objective. This keeps the method compatible with pretrained VLAs, but it also means that failures caused by action-space limitations, insufficient demonstrations, or poor language-action grounding may remain. Finally, full-resolution teacher caches and auxiliary-head training add offline preprocessing and training cost, even though the teacher is not required at deployment. Future work should study online calibration robustness, stronger real-world validation, and whether geometry-aware visual tokens can be combined with action representations that make more direct use of 3D structure.
+
+\section{Conclusion}
+\label{sec:conclusion}
+We presented a camera-aware interface for vision-language-action policies. Intrinsic ray embeddings, projective positional encoding, and cross-view fusion expose calibrated camera geometry inside the visual-token stream of a pretrained VLA. Pi3X-based auxiliary supervision provides dense geometric regularization during training without manual dense labels. The result is a compact way to improve spatial precision in generalist manipulation policies through calibrated camera structure rather than wholesale changes to the policy architecture.
+
+
+%===============================================================================
+
+\clearpage
+% The acknowledgments are automatically included only in the final and preprint versions of the paper.
+\acknowledgments{If a paper is accepted, the final camera-ready version will (and probably should) include acknowledgments. All acknowledgments go at the end of the paper, including thanks to reviewers who gave useful comments, to colleagues who contributed to the ideas, and to funding agencies and corporate sponsors that provided financial support.}
+
+%===============================================================================
+
+% no \bibliographystyle is required, since the corl style is automatically used.
+\bibliography{references}  % .bib
+
+\end{document}
