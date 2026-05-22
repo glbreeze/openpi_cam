@@ -187,3 +187,5 @@ pi0_base_ckpt/
 logs/
 evaluation.md
 train_torch.sh
+
+.DS_Store
