@@ -342,6 +342,7 @@ def main():
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--raw-root", required=True, type=Path)
     parser.add_argument("--output-root", required=True, type=Path)
+    parser.add_argument("--output-suite-dir", default="libero_object")
     parser.add_argument("--libero-camera-root", required=True, type=Path)
     parser.add_argument("--render-resolution", type=int, default=256)
     parser.add_argument("--settle-steps", type=int, default=10)
@@ -373,7 +374,7 @@ def main():
             try:
                 for row in sorted(rows, key=lambda item: int(item["episode_index"])):
                     target_idx = int(row["episode_index"])
-                    output_path = output_root / "libero_object" / f"episode_{target_idx:06d}.hdf5"
+                    output_path = output_root / args.output_suite_dir / f"episode_{target_idx:06d}.hdf5"
                     if args.resume and output_path.exists():
                         skipped += 1
                         continue

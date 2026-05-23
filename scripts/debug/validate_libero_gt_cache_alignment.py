@@ -58,8 +58,8 @@ def _npz_array_shape(path: Path, key: str) -> tuple[int, ...]:
     return tuple(int(x) for x in shape)
 
 
-def _validate_depth(depth_root: Path, manifest_rows: list[dict], decimals: int):
-    root = depth_root / "libero_object"
+def _validate_depth(depth_root: Path, manifest_rows: list[dict], decimals: int, suite_dir: str):
+    root = depth_root / suite_dir
     for row in manifest_rows:
         idx = int(row["episode_index"])
         path = root / f"episode_{idx:06d}.hdf5"
@@ -114,6 +114,7 @@ def main():
     parser.add_argument("--dataset-root", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--depth-root", required=True, type=Path)
+    parser.add_argument("--depth-suite-dir", default="libero_object")
     parser.add_argument("--cache-root", required=True, type=Path)
     parser.add_argument("--action-decimals", type=int, default=6)
     args = parser.parse_args()
@@ -124,7 +125,7 @@ def main():
     if manifest_lengths != lerobot_lengths:
         raise ValueError("Manifest lengths do not match LeRobot episode metadata")
 
-    _validate_depth(args.depth_root.expanduser(), manifest_rows, args.action_decimals)
+    _validate_depth(args.depth_root.expanduser(), manifest_rows, args.action_decimals, args.depth_suite_dir)
     _validate_cache(args.cache_root.expanduser(), manifest_rows)
 
     print("gt_cache_alignment_ok")

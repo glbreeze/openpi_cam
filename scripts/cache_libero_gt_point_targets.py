@@ -81,6 +81,8 @@ def _postprocess_model_xml(model_xml, libero_utils, libero_repo: Path | None):
             candidate = local_assets_root / suffix
             if candidate.exists():
                 elem.set("file", str(candidate))
+    for elem in root.iter("light"):
+        elem.attrib.pop("type", None)
     return ET.tostring(root, encoding="utf8").decode("utf8")
 
 
@@ -189,7 +191,15 @@ def _append_target_from_depth(
     per_cam[out_name]["conf"].append(conf.astype(np.float16))
 
 
-def _init_env(h5_file, render_resolution: int, libero_utils, TASK_MAPPING, libero_repo: Path | None):
+def _init_env(
+    h5_file,
+    render_resolution: int,
+    libero_utils,
+    TASK_MAPPING,
+    libero_repo: Path | None,
+    *,
+    offscreen_renderer: bool = True,
+):
     env_name = h5_file["data"].attrs.get("env", h5_file["data"].attrs.get("env_name"))
     env_args_raw = h5_file["data"].attrs.get("env_args")
     env_info_raw = h5_file["data"].attrs.get("env_info")
@@ -208,10 +218,10 @@ def _init_env(h5_file, render_resolution: int, libero_utils, TASK_MAPPING, liber
         env_kwargs,
         bddl_file_name=bddl_file_name,
         has_renderer=False,
-        has_offscreen_renderer=True,
+        has_offscreen_renderer=offscreen_renderer,
         ignore_done=True,
-        use_camera_obs=True,
-        camera_depths=True,
+        use_camera_obs=offscreen_renderer,
+        camera_depths=offscreen_renderer,
         camera_names=["robot0_eye_in_hand", "agentview"],
         reward_shaping=True,
         control_freq=20,
@@ -237,6 +247,7 @@ def main():
     parser.add_argument("--max-files", type=int, default=0)
     parser.add_argument("--max-episodes-per-file", type=int, default=0)
     parser.add_argument("--start-episode-index", type=int, default=0)
+    parser.add_argument("--no-offscreen-renderer", action="store_true")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
 
@@ -283,7 +294,14 @@ def main():
                     )
 
                 if env is None:
-                    env = _init_env(f, args.render_resolution, libero_utils, TASK_MAPPING, libero_repo)
+                    env = _init_env(
+                        f,
+                        args.render_resolution,
+                        libero_utils,
+                        TASK_MAPPING,
+                        libero_repo,
+                        offscreen_renderer=not args.no_offscreen_renderer,
+                    )
 
                 model_xml = _postprocess_model_xml(ep_group.attrs["model_file"], libero_utils, libero_repo)
                 per_cam = {name: {"xy": [], "log_z": [], "conf": []} for name in out_paths}

@@ -57,7 +57,7 @@ def _episode_parquets(dataset_root: Path) -> list[Path]:
 
 def _raw_episode_index(raw_root: Path, decimals: int) -> dict[tuple[int, str], list[dict]]:
     index: dict[tuple[int, str], list[dict]] = defaultdict(list)
-    for raw_path in sorted(raw_root.glob("*.hdf5")):
+    for raw_path in sorted(raw_root.rglob("*.hdf5")):
         with h5py.File(raw_path, "r") as f:
             for episode_name in sorted(f["data"].keys()):
                 raw_actions = np.asarray(f[f"data/{episode_name}/actions"], dtype=np.float32)
@@ -65,7 +65,7 @@ def _raw_episode_index(raw_root: Path, decimals: int) -> dict[tuple[int, str], l
                 length, digest = _fingerprint_actions(filtered_actions, decimals)
                 index[(length, digest)].append(
                     {
-                        "raw_file": raw_path.name,
+                        "raw_file": str(raw_path.relative_to(raw_root)),
                         "raw_episode": episode_name,
                         "length": length,
                         "kept_indices": kept_indices,
