@@ -1922,6 +1922,31 @@ _CONFIGS = [
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi05_base"),
         num_train_steps=30_000,
     ),
+    # Baseline for Ablation 1: pi0.5 backbone, single-stage full finetune,
+    # geometry stack OFF. Apples-to-apples comparison against
+    # `pi05_libero_cam_pytorch_prope_ray_view_distill_fullres_4suite_stage2`:
+    # same data (libero_cam_v2), same trainer (PyTorch), same step count
+    # (30k), same assets — only the camera-aware modules are removed.
+    TrainConfig(
+        name="pi05_libero_cam_pytorch_full_finetune",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=10,
+            discrete_state_input=False,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_cam_v2",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_cam_v2",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=False,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi05_base"),
+        num_train_steps=30_000,
+    ),
     # Pi0.5 camera-aware recipe with the official pi05_libero training
     # hyperparameters. The camera-aware stack is still trained in two stages:
     # stage 1 warms up only the newly added geometry modules, while stage 2
