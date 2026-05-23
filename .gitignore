@@ -183,6 +183,7 @@ log/
 
 checkpoints_*
 # Local scratch / personal
+tmp/
 pi0_base_ckpt/
 logs/
 evaluation.md
