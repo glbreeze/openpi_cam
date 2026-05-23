@@ -24,6 +24,7 @@ Multi-Node Training:
 """
 
 import dataclasses
+import contextlib
 import gc
 import logging
 import os
@@ -566,13 +567,29 @@ def train_loop(config: _config.TrainConfig):
     # Calculate effective batch size per GPU for DDP
     # For N GPUs, each GPU should get batch_size/N samples, so total across all GPUs is batch_size
     world_size = torch.distributed.get_world_size() if use_ddp else 1
-    effective_batch_size = config.batch_size // world_size
+    micro_batch_size = int(os.environ.get("OPENPI_MICRO_BATCH_SIZE", config.batch_size))
+    if micro_batch_size <= 0:
+        raise ValueError(f"OPENPI_MICRO_BATCH_SIZE must be positive, got {micro_batch_size}")
+    if config.batch_size % micro_batch_size != 0:
+        raise ValueError(
+            f"Global batch size ({config.batch_size}) must be divisible by micro batch size ({micro_batch_size})"
+        )
+    if micro_batch_size % world_size != 0:
+        raise ValueError(f"Micro batch size ({micro_batch_size}) must be divisible by world size ({world_size})")
+
+    gradient_accumulation_steps = config.batch_size // micro_batch_size
+    loader_config = config if micro_batch_size == config.batch_size else dataclasses.replace(config, batch_size=micro_batch_size)
+    effective_batch_size = micro_batch_size // world_size
     logging.info(
-        f"Using batch size per GPU: {effective_batch_size} (total batch size across {world_size} GPUs: {config.batch_size})"
+        f"Using micro batch size per GPU: {effective_batch_size} "
+        f"(micro batch size across {world_size} GPUs: {micro_batch_size}, "
+        f"gradient_accumulation_steps={gradient_accumulation_steps}, "
+        f"effective global batch size={config.batch_size})"
     )
 
-    # Pass the original batch size to data loader - it will handle DDP splitting internally
-    loader, data_config = build_datasets(config)
+    # Pass the micro batch size to the data loader; gradient accumulation
+    # preserves the configured global batch size seen by the optimizer.
+    loader, data_config = build_datasets(loader_config)
 
     # Build model
     if not isinstance(config.model, openpi.models.pi0_config.Pi0Config):
@@ -686,7 +703,9 @@ def train_loop(config: _config.TrainConfig):
             f"Running on: {platform.node()} | world_size={torch.distributed.get_world_size() if use_ddp else 1}"
         )
         logging.info(
-            f"Training config: batch_size={config.batch_size}, effective_batch_size={effective_batch_size}, num_train_steps={config.num_train_steps}"
+            f"Training config: batch_size={config.batch_size}, micro_batch_size={micro_batch_size}, "
+            f"per_gpu_micro_batch_size={effective_batch_size}, "
+            f"gradient_accumulation_steps={gradient_accumulation_steps}, num_train_steps={config.num_train_steps}"
         )
         logging.info(f"Memory optimizations: gradient_checkpointing={enable_gradient_checkpointing}")
         logging.info(
@@ -709,6 +728,8 @@ def train_loop(config: _config.TrainConfig):
         else None
     )
     preview_logged = resuming or (not config.wandb_enabled)
+    accumulation_count = 0
+    accumulated_loss = 0.0
 
     while global_step < config.num_train_steps:
         # Set epoch for distributed training
@@ -746,13 +767,22 @@ def train_loop(config: _config.TrainConfig):
                 losses = torch.tensor(losses, device=device, dtype=torch.float32)
 
             loss = losses.mean()
+            scaled_loss = loss / gradient_accumulation_steps
+            accumulated_loss += loss.item()
+            accumulation_count += 1
 
             # Backward pass
-            loss.backward()
+            should_step = accumulation_count == gradient_accumulation_steps
+            sync_context = model.no_sync() if use_ddp and not should_step else contextlib.nullcontext()
+            with sync_context:
+                scaled_loss.backward()
 
             # Log memory usage after backward pass
             if global_step < 5 and is_main and torch.cuda.is_available():
                 log_memory_usage(device, global_step, "after_backward")
+
+            if not should_step:
+                continue
 
             # Gradient clipping
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.optimizer.clip_gradient_norm)
@@ -770,7 +800,7 @@ def train_loop(config: _config.TrainConfig):
             # Collect stats
             if is_main:
                 info = {
-                    "loss": loss.item(),
+                    "loss": accumulated_loss / gradient_accumulation_steps,
                     "learning_rate": optim.param_groups[0]["lr"],
                     "grad_norm": float(grad_norm) if isinstance(grad_norm, torch.Tensor) else grad_norm,
                 }
@@ -838,6 +868,8 @@ def train_loop(config: _config.TrainConfig):
                 infos = []  # Reset stats collection
 
             global_step += 1
+            accumulation_count = 0
+            accumulated_loss = 0.0
             # Save checkpoint using the new mechanism
             save_checkpoint(model, optim, global_step, config, is_main, data_config)
 
