@@ -7,9 +7,9 @@
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=160G
 #SBATCH --time=48:00:00
-#SBATCH --account=torch_pr_637_general
-#SBATCH --partition=l40s_public
-#SBATCH --gres=gpu:l40s:1
+#SBATCH --account=torch_pr_769_tandon_advanced
+#SBATCH --partition=a100_tandon,h100_tandon
+#SBATCH --gres=gpu:1
 #SBATCH --export=ALL
 
 set -euo pipefail
@@ -117,11 +117,14 @@ SUITE_NAME=${SUITE_NAME:-libero_object}
 NUM_TRIALS_PER_TASK=${NUM_TRIALS_PER_TASK:-10}
 TASK_ID_START=${TASK_ID_START:-0}
 TASK_ID_END=${TASK_ID_END:--1}
+TASK_ID_LIST_PATH=${TASK_ID_LIST_PATH:-}
 NUM_PARALLEL_CLIENTS=${NUM_PARALLEL_CLIENTS:-4}
 REPLAN_STEPS=${REPLAN_STEPS:-5}
 RESIZE_SIZE=${RESIZE_SIZE:-224}
 NUM_STEPS_WAIT=${NUM_STEPS_WAIT:-10}
 SEED=${SEED:-7}
+SAVE_VIDEOS=${SAVE_VIDEOS:-0}
+STRIP_LIBERO_PLUS_TASK_SUFFIX=${STRIP_LIBERO_PLUS_TASK_SUFFIX:-0}
 
 LIBERO_PLUS_ROOT=${LIBERO_PLUS_ROOT:-/scratch/yp2841/LIBERO-plus}
 LIBERO_PLUS_BENCHMARK_ROOT=${LIBERO_PLUS_BENCHMARK_ROOT:-${LIBERO_PLUS_ROOT}/libero/libero}
@@ -195,7 +198,7 @@ if [[ ! -f "${ENV_WRAPPER_PATH}" ]]; then
   exit 1
 fi
 
-python "${REPO_ROOT}/scripts/patch_libero_plus_env_wrapper.py" "${ENV_WRAPPER_PATH}"
+python "${REPO_ROOT}/scripts/debug/patch_libero_plus_env_wrapper.py" "${ENV_WRAPPER_PATH}"
 
 ckpt_dir="${CHECKPOINT_ROOT}/${CHECKPOINT_STEP}"
 if [[ ! -d "${ckpt_dir}" ]]; then
@@ -215,12 +218,15 @@ echo "checkpoint dir: ${ckpt_dir}"
 echo "config: ${CONFIG_NAME}"
 echo "suite: ${SUITE_NAME}"
 echo "task range request: [${TASK_ID_START}, ${TASK_ID_END})"
+echo "task id list path: ${TASK_ID_LIST_PATH:-<none>}"
 echo "trials per task: ${NUM_TRIALS_PER_TASK}"
 echo "parallel clients: ${NUM_PARALLEL_CLIENTS}"
 echo "benchmark root: ${LIBERO_PLUS_BENCHMARK_ROOT}"
 echo "datasets root: ${LIBERO_PLUS_DATASETS_ROOT}"
 echo "assets root: ${LIBERO_PLUS_ASSETS_ROOT}"
 echo "server batch max size: ${SERVER_BATCH_MAX_SIZE}"
+echo "save videos: ${SAVE_VIDEOS}"
+echo "strip libero plus task suffix: ${STRIP_LIBERO_PLUS_TASK_SUFFIX}"
 echo "port: ${PORT}"
 echo "summary root: ${SHARD_SUMMARY_ROOT}"
 echo "aggregate summary: ${AGGREGATE_SUMMARY_PATH}"
@@ -276,7 +282,27 @@ if [[ "${global_task_start}" -ge "${global_task_end}" ]]; then
   exit 1
 fi
 
-range_task_count=$((global_task_end - global_task_start))
+TASK_IDS=()
+if [[ -n "${TASK_ID_LIST_PATH}" ]]; then
+  if [[ ! -f "${TASK_ID_LIST_PATH}" ]]; then
+    echo "Missing task id list: ${TASK_ID_LIST_PATH}" >&2
+    exit 1
+  fi
+  while IFS= read -r task_id; do
+    [[ -n "${task_id}" ]] || continue
+    [[ "${task_id}" =~ ^# ]] && continue
+    if [[ "${task_id}" -ge "${global_task_start}" && "${task_id}" -lt "${global_task_end}" ]]; then
+      TASK_IDS+=("${task_id}")
+    fi
+  done < "${TASK_ID_LIST_PATH}"
+  range_task_count=${#TASK_IDS[@]}
+  if [[ "${range_task_count}" -lt 1 ]]; then
+    echo "No task IDs selected from ${TASK_ID_LIST_PATH}" >&2
+    exit 1
+  fi
+else
+  range_task_count=$((global_task_end - global_task_start))
+fi
 if [[ "${NUM_PARALLEL_CLIENTS}" -lt 1 ]]; then
   echo "NUM_PARALLEL_CLIENTS must be >= 1" >&2
   exit 1
@@ -287,23 +313,63 @@ fi
 
 echo "suite task count: ${task_count}"
 echo "effective task range: [${global_task_start}, ${global_task_end})"
+echo "effective task count: ${range_task_count}"
 echo "effective parallel clients: ${NUM_PARALLEL_CLIENTS}"
+
+strip_suffix_flag=(--args.no-strip-libero-plus-task-suffix)
+case "${STRIP_LIBERO_PLUS_TASK_SUFFIX}" in
+  true|TRUE|True|1|yes|YES|Yes)
+    strip_suffix_flag=(--args.strip-libero-plus-task-suffix)
+    ;;
+  false|FALSE|False|0|no|NO|No)
+    strip_suffix_flag=(--args.no-strip-libero-plus-task-suffix)
+    ;;
+  *)
+    echo "Unsupported STRIP_LIBERO_PLUS_TASK_SUFFIX value: ${STRIP_LIBERO_PLUS_TASK_SUFFIX}" >&2
+    exit 1
+    ;;
+esac
 
 CLIENT_PIDS=()
 client_rc=0
 for client_idx in $(seq 0 $((NUM_PARALLEL_CLIENTS - 1))); do
   offset_start=$(( client_idx * range_task_count / NUM_PARALLEL_CLIENTS ))
   offset_end=$(( (client_idx + 1) * range_task_count / NUM_PARALLEL_CLIENTS ))
-  task_start=$(( global_task_start + offset_start ))
-  task_end=$(( global_task_start + offset_end ))
-  if [[ "${task_start}" -ge "${task_end}" ]]; then
+  if [[ "${offset_start}" -ge "${offset_end}" ]]; then
     continue
   fi
 
   client_video_out="${VIDEO_OUT_ROOT}/shard_${client_idx}"
   shard_summary="${SHARD_SUMMARY_ROOT}/shard_${client_idx}.json"
   mkdir -p "${client_video_out}"
-  echo "Starting client ${client_idx} for task range [${task_start}, ${task_end})"
+  client_task_list_args=()
+  if [[ -n "${TASK_ID_LIST_PATH}" ]]; then
+    shard_task_list="${SHARD_SUMMARY_ROOT}/task_ids_shard_${client_idx}.txt"
+    : > "${shard_task_list}"
+    for (( task_offset=offset_start; task_offset<offset_end; task_offset++ )); do
+      printf '%s\n' "${TASK_IDS[task_offset]}" >> "${shard_task_list}"
+    done
+    task_start="${TASK_IDS[offset_start]}"
+    task_end=$(( ${TASK_IDS[offset_end - 1]} + 1 ))
+    client_task_list_args=(--args.task-id-list-path "${shard_task_list}")
+  else
+    task_start=$(( global_task_start + offset_start ))
+    task_end=$(( global_task_start + offset_end ))
+  fi
+  echo "Starting client ${client_idx} for task range [${task_start}, ${task_end}); list=${client_task_list_args[*]:-<none>}"
+  save_video_flag=(--args.no-save-videos)
+  case "${SAVE_VIDEOS}" in
+    true|TRUE|True|1|yes|YES|Yes)
+      save_video_flag=(--args.save-videos)
+      ;;
+    false|FALSE|False|0|no|NO|No)
+      save_video_flag=(--args.no-save-videos)
+      ;;
+    *)
+      echo "Unsupported SAVE_VIDEOS value: ${SAVE_VIDEOS}" >&2
+      exit 1
+      ;;
+  esac
   python examples/libero/main_plus.py \
     --args.host 127.0.0.1 \
     --args.port "${PORT}" \
@@ -312,10 +378,13 @@ for client_idx in $(seq 0 $((NUM_PARALLEL_CLIENTS - 1))); do
     --args.num-trials-per-task "${NUM_TRIALS_PER_TASK}" \
     --args.task-id-start "${task_start}" \
     --args.task-id-end "${task_end}" \
+    "${client_task_list_args[@]}" \
     --args.replan-steps "${REPLAN_STEPS}" \
     --args.resize-size "${RESIZE_SIZE}" \
     --args.num-steps-wait "${NUM_STEPS_WAIT}" \
     --args.seed "${SEED}" \
+    "${save_video_flag[@]}" \
+    "${strip_suffix_flag[@]}" \
     --args.video-out-path "${client_video_out}" \
     --args.summary-out-path "${shard_summary}" &
   CLIENT_PIDS+=("$!")
@@ -356,6 +425,9 @@ aggregate = {
         min(summary["task_range"][0] for summary in summaries),
         max(summary["task_range"][1] for summary in summaries),
     ],
+    "task_id_list_path": summaries[0].get("task_id_list_path"),
+    "task_ids": sorted({task_id for summary in summaries for task_id in summary.get("task_ids", [])}),
+    "strip_libero_plus_task_suffix": summaries[0].get("strip_libero_plus_task_suffix", False),
     "num_trials_per_task": summaries[0]["num_trials_per_task"],
     "total_episodes": total_episodes,
     "total_successes": total_successes,

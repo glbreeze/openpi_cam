@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import pathlib
+import re
 import sys
 
 import imageio
@@ -65,8 +66,11 @@ class Args:
     num_trials_per_task: int = 50
     task_id_start: int = 0
     task_id_end: int = -1
+    task_id_list_path: str | None = None
+    strip_libero_plus_task_suffix: bool = False
 
     video_out_path: str = "data/libero/videos"
+    save_videos: bool = False
     summary_out_path: str | None = None
 
     seed: int = 7
@@ -103,18 +107,34 @@ def eval_libero(args: Args) -> None:
         raise ValueError(
             f"Invalid task range [{task_id_start}, {task_id_end}) for suite with {num_tasks_in_suite} tasks"
         )
-    logging.info("Task range: [%d, %d) out of %d", task_id_start, task_id_end, num_tasks_in_suite)
+    if args.task_id_list_path:
+        task_ids = _load_task_id_list(args.task_id_list_path, task_id_start, task_id_end)
+        if not task_ids:
+            raise ValueError(f"No task IDs selected from {args.task_id_list_path}")
+        logging.info(
+            "Task list: %s tasks from %s within [%d, %d) out of %d",
+            len(task_ids),
+            args.task_id_list_path,
+            task_id_start,
+            task_id_end,
+            num_tasks_in_suite,
+        )
+    else:
+        task_ids = list(range(task_id_start, task_id_end))
+        logging.info("Task range: [%d, %d) out of %d", task_id_start, task_id_end, num_tasks_in_suite)
 
     total_episodes, total_successes = 0, 0
     records: list[dict] = []
-    for task_id in tqdm.tqdm(range(task_id_start, task_id_end)):
+    for task_id in tqdm.tqdm(task_ids):
         task = task_suite.get_task(task_id)
         initial_states = task_suite.get_task_init_states(task_id)
         env, task_description = _get_libero_env(task, LIBERO_ENV_RESOLUTION, args.seed)
+        prompt = _strip_libero_plus_task_suffix(task_description) if args.strip_libero_plus_task_suffix else task_description
 
         task_episodes, task_successes = 0, 0
         for episode_idx in tqdm.tqdm(range(args.num_trials_per_task)):
             logging.info("\nTask: %s", task_description)
+            logging.info("Prompt: %s", prompt)
             env.reset()
             action_plan = collections.deque()
             obs = env.set_init_state(initial_states[episode_idx])
@@ -139,7 +159,8 @@ def eval_libero(args: Args) -> None:
                         image_tools.resize_with_pad(wrist_img, args.resize_size, args.resize_size)
                     )
 
-                    replay_images.append(img)
+                    if args.save_videos:
+                        replay_images.append(img)
 
                     if not action_plan:
                         element = {
@@ -160,7 +181,7 @@ def eval_libero(args: Args) -> None:
                             "observation/wrist_intrinsic": _get_camera_intrinsic(
                                 env, "robot0_eye_in_hand", args.resize_size, args.resize_size
                             ),
-                            "prompt": str(task_description),
+                            "prompt": str(prompt),
                         }
 
                         action_chunk = client.infer(element)["actions"]
@@ -181,13 +202,14 @@ def eval_libero(args: Args) -> None:
             task_episodes += 1
             total_episodes += 1
 
-            suffix = "success" if done else "failure"
-            task_segment = task_description.replace(" ", "_")
-            imageio.mimwrite(
-                pathlib.Path(args.video_out_path) / f"rollout_{task_segment}_{suffix}.mp4",
-                [np.asarray(x) for x in replay_images],
-                fps=10,
-            )
+            if args.save_videos:
+                suffix = "success" if done else "failure"
+                task_segment = task_description.replace(" ", "_")
+                imageio.mimwrite(
+                    pathlib.Path(args.video_out_path) / f"rollout_{task_segment}_{suffix}.mp4",
+                    [np.asarray(x) for x in replay_images],
+                    fps=10,
+                )
 
             logging.info("Success: %s", done)
             logging.info("# episodes completed so far: %d", total_episodes)
@@ -202,6 +224,7 @@ def eval_libero(args: Args) -> None:
             {
                 "task_id": task_id,
                 "task_description": task_description,
+                "prompt": prompt,
                 "episodes": task_episodes,
                 "successes": task_successes,
                 "success_rate": task_success_rate,
@@ -212,6 +235,9 @@ def eval_libero(args: Args) -> None:
         "model_name": args.model_name or None,
         "task_suite_name": args.task_suite_name,
         "task_range": [task_id_start, task_id_end],
+        "task_id_list_path": args.task_id_list_path,
+        "task_ids": task_ids,
+        "strip_libero_plus_task_suffix": args.strip_libero_plus_task_suffix,
         "num_trials_per_task": args.num_trials_per_task,
         "total_episodes": total_episodes,
         "total_successes": total_successes,
@@ -226,6 +252,26 @@ def eval_libero(args: Args) -> None:
         summary_path = pathlib.Path(args.summary_out_path)
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+
+
+def _load_task_id_list(path: str, task_id_start: int, task_id_end: int) -> list[int]:
+    ids: list[int] = []
+    for line in pathlib.Path(path).read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        task_id = int(line)
+        if task_id_start <= task_id < task_id_end:
+            ids.append(task_id)
+    return ids
+
+
+def _strip_libero_plus_task_suffix(task_description: str) -> str:
+    return re.sub(
+        r"\s+view\s+-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s+-?\d+\s+initstate\s+\d+\s*$",
+        "",
+        task_description,
+    )
 
 
 def _get_libero_env(task, resolution, seed):
