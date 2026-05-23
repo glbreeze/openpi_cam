@@ -1787,6 +1787,97 @@ _CONFIGS = [
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,
     ),
+    # GT-scale-aligned Pi3X ("gtscale"): the Pi3X teacher with its per-(cam,frame)
+    # log-depth offset corrected to the metric GT scale (built by
+    # scripts/cache_pi3x_gtscale_targets.py). It is a Pi3X-format cache, so it goes
+    # through pi3x_targets_root / the single-teacher Pi3xLiberoTargetLoader path with
+    # legacy_conf_mse — the direct log-z MSE that actually supervises the baked-in
+    # metric scale (do NOT switch to pi3x_local_pointmap, whose self scale-align
+    # would cancel it). Identical to the pi3x stage1/stage2 recipe except the cache
+    # root. Isolates how much of GT-only's edge over Pi3X is pure depth-scale.
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_4suite_stage1_gtscale",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=0.1,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=1.0,
+                loss_type="legacy_conf_mse",
+                legacy_conf_threshold=0.1,
+                output_resolution=224,
+            ),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_cam_v2",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_cam_v2",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=str(LOCAL_OPENPI_CACHE / "pi3x_targets_224" / "libero_cam_v2_gtscale"),
+            pi3x_cache_legacy_flip=False,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=5_000,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+        trainable_prefixes=(
+            "cross_view_fusion",
+            "ray_embed",
+            "aux_point_head",
+        ),
+    ),
+    TrainConfig(
+        name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_4suite_stage2_gtscale",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=0.05,
+                loss_type="legacy_conf_mse",
+                legacy_conf_threshold=0.1,
+                output_resolution=224,
+            ),
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id=f"{HF_NAME}/libero_cam_v2",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
+                asset_id=f"{HF_NAME}/libero_cam_v2",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            extra_delta_transform=False,
+            include_cam_extrinsics=True,
+            pi3x_targets_root=str(LOCAL_OPENPI_CACHE / "pi3x_targets_224" / "libero_cam_v2_gtscale"),
+            pi3x_cache_legacy_flip=False,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
     TrainConfig(
         name="pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_4suite_1stage",
         model=pi0_config.Pi0Config(
