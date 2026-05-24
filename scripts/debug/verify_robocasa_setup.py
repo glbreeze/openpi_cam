@@ -33,7 +33,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+
+os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
 
 import gymnasium as gym
 import imageio

@@ -387,6 +387,17 @@ class LocalLeRobotDataset(lerobot_dataset.LeRobotDataset):
     """
 
     def load_hf_dataset(self) -> hf_datasets.Dataset:
+        try:
+            if self.episodes is None:
+                hf_dataset = hf_datasets.load_dataset("parquet", data_dir=str(self.root / "data"), split="train")
+            else:
+                files = [str(self.root / self.meta.get_data_file_path(ep_idx)) for ep_idx in self.episodes]
+                hf_dataset = hf_datasets.load_dataset("parquet", data_files=files, split="train")
+            hf_dataset.set_transform(lerobot_dataset.hf_transform_to_torch)
+            return hf_dataset
+        except Exception as exc:
+            logging.warning("Falling back to pandas LeRobot parquet loader for %s: %s", self.root, exc)
+
         if self.episodes is None:
             files = sorted((self.root / "data").glob("chunk-*/episode_*.parquet"))
             if not files:
@@ -398,6 +409,13 @@ class LocalLeRobotDataset(lerobot_dataset.LeRobotDataset):
             raise FileNotFoundError(f"No parquet episode files found under {self.root / 'data'}")
 
         frames = [pd.read_parquet(path) for path in files]
+        for frame in frames:
+            for column in frame.columns:
+                values = frame[column].dropna()
+                if len(values) == 0:
+                    continue
+                if isinstance(values.iloc[0], np.ndarray):
+                    frame[column] = frame[column].map(lambda value: value.tolist())
         hf_dataset = hf_datasets.Dataset.from_pandas(pd.concat(frames, ignore_index=True), preserve_index=False)
         hf_dataset.set_transform(lerobot_dataset.hf_transform_to_torch)
         return hf_dataset

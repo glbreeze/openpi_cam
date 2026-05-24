@@ -51,6 +51,18 @@ def _get_local_geo_root() -> pathlib.Path:
 
 LOCAL_GEO_ROOT = _get_local_geo_root()
 LOCAL_OPENPI_CACHE = LOCAL_GEO_ROOT / ".cache" / "openpi"
+ROBOCASA24_BUNDLE = pathlib.Path(
+    os.environ.get("ROBOCASA24_BUNDLE", "/scratch/yz11445/robocasa-human50")
+).expanduser()
+ROBOCASA24_LEROBOT_ROOT = pathlib.Path(
+    os.environ.get("ROBOCASA24_LEROBOT_ROOT", "/scratch/yz11445/robocasa24/all24_human_camaware")
+).expanduser()
+ROBOCASA24_ASSETS_DIR = pathlib.Path(
+    os.environ.get("ROBOCASA24_ASSETS_DIR", "/scratch/yz11445/pi0_robocasa24")
+).expanduser()
+ROBOCASA24_PI3X_TARGETS_ROOT = pathlib.Path(
+    os.environ.get("ROBOCASA24_PI3X_TARGETS_ROOT", str(ROBOCASA24_BUNDLE / "pi3x_targets_224"))
+).expanduser()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -492,13 +504,13 @@ class LeRobotRobotwinCamDataConfig(DataConfigFactory):
 
 @dataclasses.dataclass(frozen=True)
 class LeRobotRobocasaCamDataConfig(DataConfigFactory):
-    """Cam-aware RoboCasa365 (PandaOmron) LeRobot v2.1 config: 3 cams + per-cam K + T_wc.
+    """Cam-aware RoboCasa LeRobot v2.1 config: 2-3 cams + per-cam K + T_wc.
 
     Mirrors `LeRobotRobotwinCamDataConfig` — same Pi3X / GT-mix point-target
-    plumbing, same `include_cam_extrinsics` switch — but maps RoboCasa365's
-    three cameras (robot0_agentview_left, robot0_agentview_right,
-    robot0_eye_in_hand) into the model's agent / wrist / right_wrist slots
-    via `RobocasaCamInputs`.
+    plumbing, same `include_cam_extrinsics` switch — but maps RoboCasa cameras
+    into the model's agent / wrist / right_wrist slots via `RobocasaCamInputs`.
+    RoboCasa365 uses all three cameras; RoboCasa v0 human50 uses two cameras
+    and pads right_wrist when `include_right_agentview=False`.
 
     Repack maps the upstream LeRobot converter's keys:
         observation.images.robot0_<cam>        -> observation/<cam>
@@ -519,6 +531,7 @@ class LeRobotRobocasaCamDataConfig(DataConfigFactory):
     use_delta_joint_actions: bool = False
     default_prompt: str | None = None
     include_cam_extrinsics: bool = False
+    include_right_agentview: bool = True
     pi3x_targets_root: str | None = None
     gt_point_targets_root: str | None = None
     point_target_gt_ratio: float = 0.5
@@ -540,14 +553,20 @@ class LeRobotRobocasaCamDataConfig(DataConfigFactory):
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         repack_structure = {
             "observation.images.robot0_agentview_left": "observation.images.robot0_agentview_left",
-            "observation.images.robot0_agentview_right": "observation.images.robot0_agentview_right",
             "observation.images.robot0_eye_in_hand": "observation.images.robot0_eye_in_hand",
             "observation.state": "observation.state",
             "action": "action",
             "task": "task",
         }
+        if self.include_right_agentview:
+            repack_structure["observation.images.robot0_agentview_right"] = (
+                "observation.images.robot0_agentview_right"
+            )
         if self.include_cam_extrinsics:
-            for cam in ("agentview_left", "agentview_right", "eye_in_hand"):
+            cams = ["agentview_left", "eye_in_hand"]
+            if self.include_right_agentview:
+                cams.append("agentview_right")
+            for cam in cams:
                 repack_structure[f"observation.{cam}_extrinsic"] = f"observation.{cam}_extrinsic"
                 repack_structure[f"observation.{cam}_intrinsic"] = f"observation.{cam}_intrinsic"
         if self.pi3x_targets_root is not None or self.gt_point_targets_root is not None:
@@ -3538,6 +3557,136 @@ _CONFIGS = [
             ),
             base_config=DataConfig(prompt_from_task=True),
             include_cam_extrinsics=False,
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+        batch_size=8,
+    ),
+    #
+    # RoboCasa v0 / human50 24-task bundle, using the same full-resolution
+    # Pi3X-only distillation recipe as
+    # `pi0_libero_cam_pytorch_prope_ray_view_distill_fullres_4suite_{stage1,stage2}`.
+    # The bundle has only agentview_left + eye_in_hand, so right_wrist is padded.
+    TrainConfig(
+        name="pi0_robocasa24_all24_cam_prope_ray_view_distill_fullres_stage1",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=0.1,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=1.0,
+                loss_type="legacy_conf_mse",
+                legacy_conf_threshold=0.1,
+                output_resolution=224,
+            ),
+        ),
+        data=LeRobotRobocasaCamDataConfig(
+            repo_id="robocasa24/all24_human_camaware",
+            assets=AssetsConfig(
+                assets_dir=str(ROBOCASA24_ASSETS_DIR),
+                asset_id="robocasa24/all24_human_camaware",
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+                local_dataset_root=str(ROBOCASA24_LEROBOT_ROOT),
+            ),
+            include_cam_extrinsics=True,
+            include_right_agentview=False,
+            pi3x_targets_root=str(ROBOCASA24_PI3X_TARGETS_ROOT),
+            point_target_cams=(
+                ("base", "base"),
+                ("left_wrist", "wrist"),
+            ),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=5_000,
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500,
+            peak_lr=2.5e-5,
+            decay_steps=5_000,
+            decay_lr=2.5e-6,
+        ),
+        trainable_prefixes=(
+            "cross_view_fusion",
+            "ray_embed",
+            "aux_point_head",
+        ),
+    ),
+    TrainConfig(
+        name="pi0_robocasa24_all24_cam_prope_ray_view_distill_fullres_stage2",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="prope",
+            ray_enc_type=True,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(
+                type="standard",
+                aa_order="fg",
+                prope_layer_idx=(0,),
+            ),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(
+                enabled=True,
+                loss_weight=0.05,
+                loss_type="legacy_conf_mse",
+                legacy_conf_threshold=0.1,
+                output_resolution=224,
+            ),
+        ),
+        data=LeRobotRobocasaCamDataConfig(
+            repo_id="robocasa24/all24_human_camaware",
+            assets=AssetsConfig(
+                assets_dir=str(ROBOCASA24_ASSETS_DIR),
+                asset_id="robocasa24/all24_human_camaware",
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+                local_dataset_root=str(ROBOCASA24_LEROBOT_ROOT),
+            ),
+            include_cam_extrinsics=True,
+            include_right_agentview=False,
+            pi3x_targets_root=str(ROBOCASA24_PI3X_TARGETS_ROOT),
+            point_target_cams=(
+                ("base", "base"),
+                ("left_wrist", "wrist"),
+            ),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi0_robocasa24_all24_baseline",
+        model=pi0_config.Pi0Config(
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(enabled=False),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotRobocasaCamDataConfig(
+            repo_id="robocasa24/all24_human_camaware",
+            assets=AssetsConfig(
+                assets_dir=str(ROBOCASA24_ASSETS_DIR),
+                asset_id="robocasa24/all24_human_camaware",
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+                local_dataset_root=str(ROBOCASA24_LEROBOT_ROOT),
+            ),
+            include_cam_extrinsics=False,
+            include_right_agentview=False,
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
         num_train_steps=30_000,

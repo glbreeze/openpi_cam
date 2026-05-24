@@ -50,6 +50,7 @@ from pathlib import Path
 # the slow osmesa CPU rasterizer. EGL is ~50× faster (0.6 ms vs 30 ms per render
 # at 224×224 on RTX 4090) — the single biggest speedup available here.
 os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
 
 import h5py
 import numpy as np

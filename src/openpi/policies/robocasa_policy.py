@@ -123,12 +123,15 @@ class RobocasaInputs(transforms.DataTransformFn):
     `observation.state`, `action`) used during training and a simpler
     inference-style structure (`images`, `state`, `actions`, `prompt`).
 
-    Image-to-slot mapping (mirrors the LIBERO single-arm + padded-right-wrist
-    pattern but with three real cams):
+    Image-to-slot mapping:
 
         agentview_left -> base_0_rgb         (agent slot, always valid)
         eye_in_hand    -> left_wrist_0_rgb   (wrist slot, always valid)
-        agentview_right-> right_wrist_0_rgb  (second exo, always valid)
+        agentview_right-> right_wrist_0_rgb  (second exo, optional for v0)
+
+    RoboCasa365 datasets carry all three cameras. RoboCasa v0 human50 carries
+    only agentview_left + eye_in_hand, so the right_wrist slot is padded and
+    masked out just like LIBERO's missing right wrist camera.
 
     State and action are zero-padded out to the model's configured dims.
     """
@@ -152,7 +155,7 @@ class RobocasaInputs(transforms.DataTransformFn):
                     raw_images.get("robot0_eye_in_hand"),
                 ),
             }
-            missing = [k for k, v in source_images.items() if v is None]
+            missing = [k for k in ("agentview_left", "eye_in_hand") if source_images[k] is None]
             if missing:
                 raise KeyError(f"RobocasaInputs: 'images' dict missing for {missing}; got keys {list(raw_images)}")
             state = np.asarray(_get_first(data, "state", "observation.state", "observation/state"), dtype=np.float32)
@@ -166,7 +169,7 @@ class RobocasaInputs(transforms.DataTransformFn):
                     "observation/agentview_left_image",
                     "video.robot0_agentview_left",
                 ),
-                "agentview_right": _get_first(
+                "agentview_right": _maybe_get_first(
                     data,
                     "observation.images.robot0_agentview_right",
                     "observation/agentview_right_image",
@@ -185,7 +188,9 @@ class RobocasaInputs(transforms.DataTransformFn):
 
         base_image = _parse_image(source_images["agentview_left"])
         wrist_image = _parse_image(source_images["eye_in_hand"])
-        right_image = _parse_image(source_images["agentview_right"])
+        has_right_image = source_images["agentview_right"] is not None
+        right_image = _parse_image(source_images["agentview_right"]) if has_right_image else np.zeros_like(base_image)
+        right_mask = np.True_ if has_right_image or self.model_type == _model.ModelType.PI0_FAST else np.False_
 
         inputs = {
             "state": state,
@@ -197,9 +202,7 @@ class RobocasaInputs(transforms.DataTransformFn):
             "image_mask": {
                 "base_0_rgb": np.True_,
                 "left_wrist_0_rgb": np.True_,
-                # All three RoboCasa cams are real, so right_wrist gets a real
-                # mask (not the False-for-pi0 padding we use on LIBERO).
-                "right_wrist_0_rgb": np.True_,
+                "right_wrist_0_rgb": right_mask,
             },
         }
 

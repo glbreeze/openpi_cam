@@ -18,7 +18,7 @@ Output layout:
       /demos/demo_<n>/
         K_agent           (3, 3)        float32  — natural OpenGL K (positive fx)
         K_wrist           (3, 3)        float32
-        T_wc_agent        (T, 4, 4)     float32  — OpenCV camera-to-world
+        T_wc_agent        (T, 4, 4)     float32  — raw MuJoCo/OpenGL camera-to-world
         T_wc_wrist        (T, 4, 4)     float32
         action            (T, 12)       float32  — permuted to LeRobot layout
         state             (T, 16)       float32  — [base_pos(3), base_quat(4),
@@ -29,9 +29,8 @@ Output layout:
 
 Coordinate conventions:
     - MuJoCo `cam_xmat` is camera-to-world rotation in OpenGL convention
-      (x-right, y-up, z-back). We negate the y and z basis vectors to convert
-      to OpenCV (x-right, y-down, z-forward), matching what `RobocasaCamInputs`
-      expects and what `libero_policy._mujoco_to_opencv_extrinsic` does.
+      (x-right, y-up, z-back). We store it raw and let `RobocasaCamInputs`
+      apply the OpenGL-to-OpenCV conversion at load time.
     - K stored is at the SOURCE image size (128). Stage 2 rescales K to 224
       when it also resizes the images.
 
@@ -48,6 +47,8 @@ import json
 import logging
 import os
 from pathlib import Path
+
+os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
 
 import h5py
 import numpy as np

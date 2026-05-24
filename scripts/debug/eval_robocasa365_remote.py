@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
+
+os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
 
 import gymnasium as gym
 import imageio
