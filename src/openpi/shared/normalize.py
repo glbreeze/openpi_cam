@@ -116,6 +116,35 @@ class RunningStats:
             results.append(np.array(q_values))
         return results
 
+    def state_dict(self) -> dict[str, object]:
+        """Return a serializable snapshot of the running statistics state."""
+        return {
+            "count": self._count,
+            "mean": None if self._mean is None else self._mean.copy(),
+            "mean_of_squares": None if self._mean_of_squares is None else self._mean_of_squares.copy(),
+            "min": None if self._min is None else self._min.copy(),
+            "max": None if self._max is None else self._max.copy(),
+            "histograms": None if self._histograms is None else [hist.copy() for hist in self._histograms],
+            "bin_edges": None if self._bin_edges is None else [edges.copy() for edges in self._bin_edges],
+            "num_quantile_bins": self._num_quantile_bins,
+        }
+
+    @classmethod
+    def from_state_dict(cls, state: dict[str, object]) -> "RunningStats":
+        """Restore running statistics from ``state_dict`` output."""
+        stats = cls()
+        stats._count = int(state["count"])
+        stats._num_quantile_bins = int(state["num_quantile_bins"])
+        stats._mean = None if state["mean"] is None else np.asarray(state["mean"])
+        stats._mean_of_squares = None if state["mean_of_squares"] is None else np.asarray(state["mean_of_squares"])
+        stats._min = None if state["min"] is None else np.asarray(state["min"])
+        stats._max = None if state["max"] is None else np.asarray(state["max"])
+        stats._histograms = (
+            None if state["histograms"] is None else [np.asarray(hist) for hist in state["histograms"]]
+        )
+        stats._bin_edges = None if state["bin_edges"] is None else [np.asarray(edges) for edges in state["bin_edges"]]
+        return stats
+
 
 class _NormStatsDict(pydantic.BaseModel):
     norm_stats: dict[str, NormStats]

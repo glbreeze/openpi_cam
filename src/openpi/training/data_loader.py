@@ -1,4 +1,5 @@
 from collections.abc import Iterator, Sequence
+import json
 import logging
 import multiprocessing
 import os
@@ -20,8 +21,251 @@ from openpi.training.droid_rlds_dataset import DroidRldsDataset
 import openpi.transforms as _transforms
 
 T_co = TypeVar("T_co", covariant=True)
-_PREDECODED_VIDEO_ARRAY_CACHE: dict[str, np.ndarray] = {}
-_MISSING_PREDECODED_VIDEO_CACHE_FILES: set[str] = set()
+
+
+def get_lerobot_dataset_root(repo_id: str) -> pathlib.Path:
+    return pathlib.Path(lerobot_dataset.HF_LEROBOT_HOME) / repo_id
+
+
+def _read_lerobot_info(repo_id: str) -> dict | None:
+    info_path = get_lerobot_dataset_root(repo_id) / "meta" / "info.json"
+    if not info_path.exists():
+        return None
+    return json.loads(info_path.read_text())
+
+
+def is_robotwin_lerobot_v3(repo_id: str) -> bool:
+    info = _read_lerobot_info(repo_id)
+    if info is None:
+        return False
+    return info.get("codebase_version") == "v3.0" and repo_id == "lerobot/robotwin_unified"
+
+
+class RobotwinLeRobotV3Dataset(torch.utils.data.Dataset):
+    """Minimal LeRobot v3 reader for robotwin_unified.
+
+    This bypasses the old v2.1-only `LeRobotDatasetMetadata` path and reads the
+    v3 parquet/video structure directly from disk.
+    """
+
+    def __init__(self, repo_id: str, *, action_horizon: int, task_indices: Sequence[int] = ()):
+        self._repo_id = repo_id
+        self._root = get_lerobot_dataset_root(repo_id)
+        self._info = _read_lerobot_info(repo_id)
+        if self._info is None:
+            raise FileNotFoundError(f"Missing LeRobot metadata for {repo_id} at {self._root / 'meta' / 'info.json'}")
+        if self._info.get("codebase_version") != "v3.0":
+            raise ValueError(f"{repo_id} is not a LeRobot v3 dataset")
+
+        self._fps = int(self._info["fps"])
+        self._action_horizon = action_horizon
+        self._task_map = self._load_task_map()
+        self._episode_ranges, self._episode_video_metadata = self._load_episode_metadata()
+        self._hf_dataset = self._load_data_table()
+        self._row_indices = self._select_row_indices(task_indices)
+
+    def _load_task_map(self) -> dict[int, str]:
+        import pyarrow.dataset as pa_dataset
+
+        tasks_path = self._root / "meta" / "tasks.parquet"
+        table = pa_dataset.dataset(tasks_path, format="parquet").to_table(columns=["task_index", "task"])
+        task_indices = table.column("task_index").to_pylist()
+        tasks = table.column("task").to_pylist()
+        return {int(task_index): str(task) for task_index, task in zip(task_indices, tasks, strict=True)}
+
+    def _load_episode_metadata(
+        self,
+    ) -> tuple[
+        dict[int, tuple[int, int]],
+        dict[int, dict[str, tuple[int, int, float, float]]],
+    ]:
+        import pyarrow.dataset as pa_dataset
+
+        episodes_root = self._root / "meta" / "episodes"
+        table = pa_dataset.dataset(episodes_root, format="parquet").to_table(
+            columns=[
+                "episode_index",
+                "dataset_from_index",
+                "dataset_to_index",
+                "videos/observation.images.cam_high/chunk_index",
+                "videos/observation.images.cam_high/file_index",
+                "videos/observation.images.cam_high/from_timestamp",
+                "videos/observation.images.cam_high/to_timestamp",
+                "videos/observation.images.cam_left_wrist/chunk_index",
+                "videos/observation.images.cam_left_wrist/file_index",
+                "videos/observation.images.cam_left_wrist/from_timestamp",
+                "videos/observation.images.cam_left_wrist/to_timestamp",
+                "videos/observation.images.cam_right_wrist/chunk_index",
+                "videos/observation.images.cam_right_wrist/file_index",
+                "videos/observation.images.cam_right_wrist/from_timestamp",
+                "videos/observation.images.cam_right_wrist/to_timestamp",
+            ]
+        )
+        episode_indices = table.column("episode_index").to_pylist()
+        from_indices = table.column("dataset_from_index").to_pylist()
+        to_indices = table.column("dataset_to_index").to_pylist()
+        cam_high_chunk_indices = table.column("videos/observation.images.cam_high/chunk_index").to_pylist()
+        cam_high_file_indices = table.column("videos/observation.images.cam_high/file_index").to_pylist()
+        cam_high_from_timestamps = table.column("videos/observation.images.cam_high/from_timestamp").to_pylist()
+        cam_high_to_timestamps = table.column("videos/observation.images.cam_high/to_timestamp").to_pylist()
+        cam_left_chunk_indices = table.column("videos/observation.images.cam_left_wrist/chunk_index").to_pylist()
+        cam_left_file_indices = table.column("videos/observation.images.cam_left_wrist/file_index").to_pylist()
+        cam_left_from_timestamps = table.column("videos/observation.images.cam_left_wrist/from_timestamp").to_pylist()
+        cam_left_to_timestamps = table.column("videos/observation.images.cam_left_wrist/to_timestamp").to_pylist()
+        cam_right_chunk_indices = table.column("videos/observation.images.cam_right_wrist/chunk_index").to_pylist()
+        cam_right_file_indices = table.column("videos/observation.images.cam_right_wrist/file_index").to_pylist()
+        cam_right_from_timestamps = table.column("videos/observation.images.cam_right_wrist/from_timestamp").to_pylist()
+        cam_right_to_timestamps = table.column("videos/observation.images.cam_right_wrist/to_timestamp").to_pylist()
+
+        episode_ranges: dict[int, tuple[int, int]] = {}
+        episode_video_metadata: dict[int, dict[str, tuple[int, int, float, float]]] = {}
+        for (
+            episode_index,
+            from_index,
+            to_index,
+            cam_high_chunk_index,
+            cam_high_file_index,
+            cam_high_from_timestamp,
+            cam_high_to_timestamp,
+            cam_left_chunk_index,
+            cam_left_file_index,
+            cam_left_from_timestamp,
+            cam_left_to_timestamp,
+            cam_right_chunk_index,
+            cam_right_file_index,
+            cam_right_from_timestamp,
+            cam_right_to_timestamp,
+        ) in zip(
+            episode_indices,
+            from_indices,
+            to_indices,
+            cam_high_chunk_indices,
+            cam_high_file_indices,
+            cam_high_from_timestamps,
+            cam_high_to_timestamps,
+            cam_left_chunk_indices,
+            cam_left_file_indices,
+            cam_left_from_timestamps,
+            cam_left_to_timestamps,
+            cam_right_chunk_indices,
+            cam_right_file_indices,
+            cam_right_from_timestamps,
+            cam_right_to_timestamps,
+            strict=True,
+        ):
+            ep_idx = int(episode_index)
+            start = int(from_index)
+            end = int(to_index)
+            episode_ranges[ep_idx] = (start, end)
+            episode_video_metadata[ep_idx] = {
+                "observation.images.cam_high": (
+                    int(cam_high_chunk_index),
+                    int(cam_high_file_index),
+                    float(cam_high_from_timestamp),
+                    float(cam_high_to_timestamp),
+                ),
+                "observation.images.cam_left_wrist": (
+                    int(cam_left_chunk_index),
+                    int(cam_left_file_index),
+                    float(cam_left_from_timestamp),
+                    float(cam_left_to_timestamp),
+                ),
+                "observation.images.cam_right_wrist": (
+                    int(cam_right_chunk_index),
+                    int(cam_right_file_index),
+                    float(cam_right_from_timestamp),
+                    float(cam_right_to_timestamp),
+                ),
+            }
+
+        return episode_ranges, episode_video_metadata
+
+    def _load_data_table(self):
+        import datasets
+
+        data_glob = str(self._root / "data" / "chunk-*" / "file-*.parquet")
+        return datasets.load_dataset("parquet", data_files=data_glob, split="train")
+
+    def _select_row_indices(self, task_indices: Sequence[int]) -> list[int] | None:
+        if not task_indices:
+            return None
+
+        missing_task_indices = sorted(set(task_indices) - set(self._task_map))
+        if missing_task_indices:
+            raise ValueError(f"task_indices not found in dataset metadata: {missing_task_indices}")
+
+        allowed_task_indices = set(task_indices)
+        row_indices = [
+            row_index
+            for row_index, task_index in enumerate(self._hf_dataset["task_index"])
+            if int(task_index) in allowed_task_indices
+        ]
+        if not row_indices:
+            raise ValueError(f"No rows matched task_indices={tuple(task_indices)} for {self._repo_id}")
+
+        logging.info(
+            "Filtering %s to task_indices=%s (%s frames)",
+            self._repo_id,
+            tuple(task_indices),
+            len(row_indices),
+        )
+        return row_indices
+
+    def _action_chunk(self, global_index: int, episode_index: int) -> np.ndarray:
+        ep_start, ep_end = self._episode_ranges[episode_index]
+        query_indices = [max(ep_start, min(ep_end - 1, global_index + delta)) for delta in range(self._action_horizon)]
+        action_rows = self._hf_dataset.select(query_indices)["action"]
+        return np.asarray(action_rows, dtype=np.float32)
+
+    def _read_video_frame(self, video_key: str, chunk_index: int, file_index: int, local_index: int) -> np.ndarray:
+        import imageio.v3 as iio
+
+        rel_path = self._info["video_path"].format(
+            video_key=video_key,
+            chunk_index=chunk_index,
+            file_index=file_index,
+        )
+        return iio.imread(self._root / rel_path, index=local_index)
+
+    def _video_frame_for_episode(self, video_key: str, episode_index: int, timestamp: float) -> np.ndarray:
+        chunk_index, file_index, from_timestamp, to_timestamp = self._episode_video_metadata[episode_index][video_key]
+        # LeRobot v3 stores per-episode timestamps starting from zero, while the
+        # episode metadata stores the video's absolute timestamp span inside the mp4.
+        local_timestamp = from_timestamp + float(timestamp)
+        local_index = round(local_timestamp * self._fps)
+        max_index = max(0, round(to_timestamp * self._fps) - 1)
+        local_index = min(local_index, max_index)
+        return self._read_video_frame(video_key, chunk_index, file_index, local_index)
+
+    def __len__(self) -> int:
+        if self._row_indices is not None:
+            return len(self._row_indices)
+        return len(self._hf_dataset)
+
+    def __getitem__(self, index: SupportsIndex) -> dict:
+        row_index = index.__index__()
+        if self._row_indices is not None:
+            row_index = self._row_indices[row_index]
+        item = self._hf_dataset[row_index]
+        global_index = int(item["index"])
+        episode_index = int(item["episode_index"])
+        task_index = int(item["task_index"])
+        timestamp = float(item["timestamp"])
+
+        return {
+            "observation.state": np.asarray(item["observation.state"], dtype=np.float32),
+            "action": self._action_chunk(global_index, episode_index),
+            "observation.images.cam_high": self._video_frame_for_episode(
+                "observation.images.cam_high", episode_index, timestamp
+            ),
+            "observation.images.cam_left_wrist": self._video_frame_for_episode(
+                "observation.images.cam_left_wrist", episode_index, timestamp
+            ),
+            "observation.images.cam_right_wrist": self._video_frame_for_episode(
+                "observation.images.cam_right_wrist", episode_index, timestamp
+            ),
+            "task": self._task_map[task_index],
+        }
 
 
 class Dataset(Protocol[T_co]):
@@ -133,18 +377,20 @@ class FakeDataset(Dataset):
 
 
 class LocalLeRobotDataset(lerobot_dataset.LeRobotDataset):
-    """LeRobotDataset variant that bypasses legacy parquet HF metadata parsing.
+    """LeRobotDataset variant for local datasets with legacy parquet metadata.
 
     Some locally generated LeRobot datasets embed Hugging Face parquet metadata
     with legacy feature tags like `_type: "List"`, which newer `datasets`
-    versions reject. Pandas can still read those files correctly, so we rebuild
-    the HF dataset from pandas DataFrames and keep the rest of the LeRobot video
-    loading path unchanged.
+    versions reject. Pandas can still read those files correctly, so this class
+    rebuilds the HF dataset from pandas DataFrames while keeping the rest of the
+    LeRobot video loading path unchanged.
     """
 
     def load_hf_dataset(self) -> hf_datasets.Dataset:
         if self.episodes is None:
             files = sorted((self.root / "data").glob("chunk-*/episode_*.parquet"))
+            if not files:
+                files = sorted((self.root / "data").glob("chunk-*/file-*.parquet"))
         else:
             files = [self.root / self.meta.get_data_file_path(ep_idx) for ep_idx in self.episodes]
 
@@ -156,162 +402,45 @@ class LocalLeRobotDataset(lerobot_dataset.LeRobotDataset):
         hf_dataset.set_transform(lerobot_dataset.hf_transform_to_torch)
         return hf_dataset
 
+    def configure_video_access(self, requested_video_keys: Sequence[str]) -> None:
+        self._requested_video_keys = frozenset(requested_video_keys)
+        self._array_cache_root = self.root.parent / f"{self.root.name}_array_cache"
+        self._array_cache_enabled = self._array_cache_root.exists()
+        self._array_cache_memmaps: dict[pathlib.Path, np.memmap] = {}
 
-class SelectiveVideoLocalLeRobotDataset(LocalLeRobotDataset):
-    """LeRobot dataset variant that decodes only a configured subset of videos."""
+    def _get_array_cache_path(self, ep_idx: int, vid_key: str) -> pathlib.Path:
+        rel_video_path = self.meta.get_video_file_path(ep_idx, vid_key)
+        return (self._array_cache_root / rel_video_path).with_suffix(".npy")
 
-    def __init__(self, *args, selected_video_keys: Sequence[str], **kwargs):
-        super().__init__(*args, **kwargs)
-        selected_video_keys = tuple(selected_video_keys)
-        missing_keys = sorted(set(selected_video_keys) - set(self.meta.video_keys))
-        if missing_keys:
-            raise ValueError(f"selected_video_keys not found in dataset metadata: {missing_keys}")
-        self._selected_video_keys = selected_video_keys
+    def _load_cached_video_frames(self, ep_idx: int, vid_key: str, query_ts: list[float]) -> torch.Tensor | None:
+        if not getattr(self, "_array_cache_enabled", False):
+            return None
+        cache_path = self._get_array_cache_path(ep_idx, vid_key)
+        if not cache_path.exists():
+            return None
 
-    def _get_query_timestamps(
-        self,
-        current_ts: float,
-        query_indices: dict[str, list[int]] | None = None,
-    ) -> dict[str, list[float]]:
-        query_timestamps = {}
-        for key in self._selected_video_keys:
-            if query_indices is not None and key in query_indices:
-                timestamps = self.hf_dataset.select(query_indices[key])["timestamp"]
-                query_timestamps[key] = torch.stack(timestamps).tolist()
-            else:
-                query_timestamps[key] = [current_ts]
-        return query_timestamps
+        frames = self._array_cache_memmaps.get(cache_path)
+        if frames is None:
+            frames = np.load(cache_path, mmap_mode="r")
+            self._array_cache_memmaps[cache_path] = frames
+
+        frame_indices = np.rint(np.asarray(query_ts, dtype=np.float64) * self.fps).astype(np.int64)
+        frame_indices = np.clip(frame_indices, 0, frames.shape[0] - 1)
+        batch = np.asarray(frames[frame_indices], dtype=np.float32) / 255.0
+        return torch.from_numpy(batch)
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
         item = {}
-        for vid_key in self._selected_video_keys:
-            query_ts = query_timestamps[vid_key]
-            video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-            frames = self._decode_video_frames_with_fallback(video_path, query_ts)
-            item[vid_key] = frames.squeeze(0)
-        return item
-
-    def _decode_video_frames_with_fallback(
-        self, video_path: pathlib.Path, query_ts: list[float]
-    ) -> torch.Tensor:
-        try:
-            return lerobot_dataset.decode_video_frames(video_path, query_ts, self.tolerance_s, self.video_backend)
-        except RuntimeError as exc:
-            default_backend = self.video_backend
-            error_message = str(exc)
-            if (
-                default_backend is None
-                and "Could not load libtorchcodec" in error_message
-            ):
-                logging.warning(
-                    "torchcodec unavailable for %s; falling back to pyav for this worker: %s",
-                    video_path,
-                    error_message.splitlines()[0],
-                )
-                return lerobot_dataset.decode_video_frames(video_path, query_ts, self.tolerance_s, "pyav")
-            raise
-
-    def __getitem__(self, idx) -> dict:
-        item = self.hf_dataset[idx]
-        ep_idx = item["episode_index"].item()
-
-        query_indices = None
-        if self.delta_indices is not None:
-            query_indices, padding = self._get_query_indices(idx, ep_idx)
-            query_result = self._query_hf_dataset(query_indices)
-            item = {**item, **padding}
-            for key, val in query_result.items():
-                item[key] = val
-
-        if self._selected_video_keys:
-            current_ts = item["timestamp"].item()
-            query_timestamps = self._get_query_timestamps(current_ts, query_indices)
-            video_frames = self._query_videos(query_timestamps, ep_idx)
-            item = {**video_frames, **item}
-
-        if self.image_transforms is not None:
-            for cam in self._selected_video_keys:
-                item[cam] = self.image_transforms(item[cam])
-
-        task_idx = item["task_index"].item()
-        item["task"] = self.meta.tasks[task_idx]
-        return item
-
-
-def _load_predecoded_video_array(npy_path: pathlib.Path) -> np.ndarray:
-    cache_key = str(npy_path)
-    array = _PREDECODED_VIDEO_ARRAY_CACHE.get(cache_key)
-    if array is None:
-        array = np.load(npy_path, mmap_mode="r")
-        _PREDECODED_VIDEO_ARRAY_CACHE[cache_key] = array
-    return array
-
-
-class PredecodedVideoLocalLeRobotDataset(SelectiveVideoLocalLeRobotDataset):
-    """LeRobot dataset variant that serves selected videos from predecoded `.npy` arrays."""
-
-    def __init__(self, *args, predecoded_video_cache_root: str | pathlib.Path, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._predecoded_video_cache_root = pathlib.Path(predecoded_video_cache_root)
-
-    def _cache_file_for_video(self, ep_idx: int, vid_key: str) -> pathlib.Path:
-        rel_video_path = pathlib.Path(self.meta.get_video_file_path(ep_idx, vid_key))
-        return self._predecoded_video_cache_root / rel_video_path.with_suffix(".npy")
-
-    def _load_cached_frame(self, cache_file: pathlib.Path, frame_index: int) -> torch.Tensor:
-        frames = _load_predecoded_video_array(cache_file)
-        if frame_index < 0 or frame_index >= frames.shape[0]:
-            raise IndexError(f"Frame index {frame_index} out of bounds for cached video {cache_file}")
-        frame = np.asarray(frames[frame_index])
-        return torch.from_numpy(frame)
-
-    def __getitem__(self, idx) -> dict:
-        item = self.hf_dataset[idx]
-        ep_idx = item["episode_index"].item()
-        current_frame_index = int(item["frame_index"].item())
-
-        query_indices = None
-        if self.delta_indices is not None:
-            query_indices, padding = self._get_query_indices(idx, ep_idx)
-            query_result = self._query_hf_dataset(query_indices)
-            item = {**item, **padding}
-            for key, val in query_result.items():
-                item[key] = val
-
-        video_frames: dict[str, torch.Tensor] = {}
-        fallback_video_keys: list[str] = []
-        for vid_key in self._selected_video_keys:
-            cache_file = self._cache_file_for_video(ep_idx, vid_key)
-            if cache_file.is_file():
-                video_frames[vid_key] = self._load_cached_frame(cache_file, current_frame_index)
-            else:
-                fallback_video_keys.append(vid_key)
-                cache_key = str(cache_file)
-                if cache_key not in _MISSING_PREDECODED_VIDEO_CACHE_FILES:
-                    logging.warning(
-                        "Missing predecoded cache file for %s episode=%s view=%s; falling back to video decode",
-                        self.repo_id,
-                        ep_idx,
-                        vid_key,
-                    )
-                    _MISSING_PREDECODED_VIDEO_CACHE_FILES.add(cache_key)
-
-        if fallback_video_keys:
-            current_ts = item["timestamp"].item()
-            query_timestamps = self._get_query_timestamps(current_ts, query_indices)
-            for vid_key in fallback_video_keys:
+        requested_video_keys = getattr(self, "_requested_video_keys", None)
+        for vid_key, query_ts in query_timestamps.items():
+            if requested_video_keys is not None and vid_key not in requested_video_keys:
+                continue
+            frames = self._load_cached_video_frames(ep_idx, vid_key, query_ts)
+            if frames is None:
                 video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-                frames = self._decode_video_frames_with_fallback(video_path, query_timestamps[vid_key])
-                video_frames[vid_key] = frames.squeeze(0)
+                frames = lerobot_dataset.decode_video_frames(video_path, query_ts, self.tolerance_s, self.video_backend)
+            item[vid_key] = frames.squeeze(0)
 
-        item = {**video_frames, **item}
-
-        if self.image_transforms is not None:
-            for cam in self._selected_video_keys:
-                item[cam] = self.image_transforms(item[cam])
-
-        task_idx = item["task_index"].item()
-        item["task"] = self.meta.tasks[task_idx]
         return item
 
 
@@ -324,11 +453,15 @@ def create_torch_dataset(
         raise ValueError("Repo ID is not set. Cannot create dataset.")
     if repo_id == "fake":
         return FakeDataset(model_config, num_samples=1024)
+    if is_robotwin_lerobot_v3(repo_id):
+        return RobotwinLeRobotV3Dataset(
+            repo_id,
+            action_horizon=action_horizon,
+            task_indices=data_config.task_indices,
+        )
 
-    dataset_root = data_config.local_dataset_root
+    dataset_root = pathlib.Path(data_config.local_dataset_root).expanduser() if data_config.local_dataset_root else None
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id, root=dataset_root)
-    if data_config.selected_video_keys:
-        logging.info("Restricting decoded video keys for %s to %s", repo_id, tuple(data_config.selected_video_keys))
 
     episodes = None
     if data_config.task_indices:
@@ -351,42 +484,34 @@ def create_torch_dataset(
             len(episodes),
         )
 
-    dataset_kwargs = {
-        "root": dataset_root,
-        "episodes": episodes,
-        "video_backend": data_config.video_backend,
-        "delta_timestamps": {
+    # LeRobot's default video backend is torchcodec which requires system FFmpeg
+    # shared libs (libavutil etc.). pyav is a self-contained pip wheel and works
+    # with the same outputs. This only affects datasets stored as video (e.g.
+    # RoboTwin / real robot); image-only datasets like LIBERO are unaffected.
+    # LocalLeRobotDataset is intentionally selected only for configs that set a
+    # local dataset root, so real-robot parquet quirks stay on the real-robot path.
+    dataset_cls = LocalLeRobotDataset if dataset_root is not None else lerobot_dataset.LeRobotDataset
+    dataset = dataset_cls(
+        data_config.repo_id,
+        root=dataset_root,
+        episodes=episodes,
+        delta_timestamps={
             key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
         },
-    }
-    if dataset_root is not None and data_config.selected_video_keys:
-        cache_root = data_config.predecoded_video_cache_root
-        if cache_root is not None and pathlib.Path(cache_root).exists():
-            logging.info("Using predecoded video cache for %s from %s", repo_id, cache_root)
-            dataset = PredecodedVideoLocalLeRobotDataset(
-                data_config.repo_id,
-                selected_video_keys=data_config.selected_video_keys,
-                predecoded_video_cache_root=cache_root,
-                **dataset_kwargs,
+        video_backend=data_config.video_backend or "pyav",
+    )
+    if isinstance(dataset, LocalLeRobotDataset):
+        requested_video_keys: list[str] = []
+        for transform in data_config.repack_transforms.inputs:
+            structure = getattr(transform, "structure", None)
+            if not isinstance(structure, dict):
+                continue
+            requested_video_keys.extend(
+                value
+                for value in structure.values()
+                if isinstance(value, str) and value.startswith("observation.images.")
             )
-        else:
-            if cache_root is not None:
-                logging.warning(
-                    "Predecoded video cache root %s does not exist for %s; falling back to direct video decode",
-                    cache_root,
-                    repo_id,
-                )
-            dataset = SelectiveVideoLocalLeRobotDataset(
-                data_config.repo_id,
-                selected_video_keys=data_config.selected_video_keys,
-                **dataset_kwargs,
-            )
-    else:
-        dataset_cls = LocalLeRobotDataset if dataset_root is not None else lerobot_dataset.LeRobotDataset
-        dataset = dataset_cls(
-            data_config.repo_id,
-            **dataset_kwargs,
-        )
+        dataset.configure_video_access(sorted(set(requested_video_keys)))
 
     if data_config.prompt_from_task:
         dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset_meta.tasks)])
@@ -683,8 +808,6 @@ class TorchDataLoader:
             num_workers=num_workers,
             multiprocessing_context=mp_context,
             persistent_workers=num_workers > 0,
-            pin_memory=torch.cuda.is_available(),
-            prefetch_factor=4 if num_workers > 0 else None,
             collate_fn=_collate_fn,
             worker_init_fn=_worker_init_fn,
             drop_last=True,

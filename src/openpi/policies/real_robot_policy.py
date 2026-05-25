@@ -49,9 +49,17 @@ class RealRobotUR5Inputs(transforms.DataTransformFn):
                 prompt = prompt.decode("utf-8")
             inputs["prompt"] = prompt
 
-        for key in ("pi3x_target_xy", "pi3x_target_logz", "pi3x_target_conf"):
+        for key in (
+            "pi3x_target_xy",
+            "pi3x_target_logz",
+            "pi3x_target_conf",
+            "point_target_xy",
+            "point_target_logz",
+            "point_target_conf",
+            "point_target_source",
+        ):
             if key in data:
-                inputs[key] = data[key]
+                inputs[key] = np.asarray(data[key])
 
         return inputs
 

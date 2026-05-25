@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Adaptive GPU-utilization filler.
-
-Runs lightweight GEMM work on visible CUDA devices when their recent GPU
-utilization is below a configured threshold. Intended as a sidecar process
-inside an existing Slurm allocation on the same node as a training job.
-"""
+"""Adaptive GPU-utilization filler."""
 
 from __future__ import annotations
 
@@ -94,13 +89,7 @@ def _sample_utils(states):
         state["rolling_gpu_util"] = sum(history) / len(history)
 
 
-def _fill_worker(
-    state,
-    run_event: threading.Event,
-    stop_event: threading.Event,
-    fill_iters: int,
-    idle_sleep_sec: float,
-):
+def _fill_worker(state, run_event: threading.Event, stop_event: threading.Event, fill_iters: int, idle_sleep_sec: float):
     device = state["device"]
     stream = state["stream"]
     while not stop_event.is_set():
@@ -118,25 +107,22 @@ def _format_summary(states) -> str:
     for state in states:
         status = "on" if state["active"] else "off"
         parts.append(
-            f"gpu{state['local_idx']}[{state['label']}]="
-            f"cur:{state['last_gpu_util']:.1f}% "
-            f"avg:{state['rolling_gpu_util']:.1f}% "
-            f"mem:{state['last_mem_util']:.1f}% "
-            f"fill:{status}"
+            f"gpu{state['local_idx']}[{state['label']}]=cur:{state['last_gpu_util']:.1f}% "
+            f"avg:{state['rolling_gpu_util']:.1f}% mem:{state['last_mem_util']:.1f}% fill:{status}"
         )
     return " | ".join(parts)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Adaptive GPU-utilization filler")
-    parser.add_argument("--threshold", type=float, default=70.0, help="Enable filler when rolling GPU util is below this percent")
-    parser.add_argument("--stop-threshold", type=float, default=None, help="Disable filler after rolling util recovers above this percent")
-    parser.add_argument("--poll-sec", type=float, default=1.0, help="Seconds between utilization samples")
-    parser.add_argument("--window", type=int, default=12, help="Rolling sample window used to decide when to fill")
-    parser.add_argument("--matrix-size", type=int, default=4096, help="Square matrix dimension for GEMM work")
-    parser.add_argument("--fill-iters", type=int, default=16, help="Number of GEMMs each active worker launches per loop")
-    parser.add_argument("--idle-sleep-sec", type=float, default=0.02, help="Worker sleep when filler is inactive on a GPU")
-    parser.add_argument("--log-sec", type=float, default=30.0, help="How often to print a status line")
+    parser.add_argument("--threshold", type=float, default=70.0)
+    parser.add_argument("--stop-threshold", type=float, default=None)
+    parser.add_argument("--poll-sec", type=float, default=1.0)
+    parser.add_argument("--window", type=int, default=12)
+    parser.add_argument("--matrix-size", type=int, default=4096)
+    parser.add_argument("--fill-iters", type=int, default=16)
+    parser.add_argument("--idle-sleep-sec", type=float, default=0.02)
+    parser.add_argument("--log-sec", type=float, default=30.0)
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -146,11 +132,7 @@ def main() -> int:
     if stop_threshold is None:
         stop_threshold = min(100.0, args.threshold + 8.0)
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     torch.set_grad_enabled(False)
     torch.set_num_threads(1)
     try:
@@ -194,24 +176,20 @@ def main() -> int:
         last_log = 0.0
         while not _STOP:
             _sample_utils(states)
-
             for state in states:
                 rolling = state["rolling_gpu_util"]
                 current = state["last_gpu_util"]
                 active = state["active"]
-
                 if not active and rolling < args.threshold:
                     state["active"] = True
                     state["run_event"].set()
                 elif active and rolling >= stop_threshold and current >= args.threshold:
                     state["active"] = False
                     state["run_event"].clear()
-
             now = time.monotonic()
             if now - last_log >= args.log_sec:
                 logging.info("Current utilization: %s", _format_summary(states))
                 last_log = now
-
             time.sleep(args.poll_sec)
     finally:
         stop_event = locals().get("stop_event")

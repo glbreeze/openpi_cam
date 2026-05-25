@@ -31,7 +31,7 @@ REPO_ROOT=${REPO_ROOT:-$(resolve_repo_root)} || {
   exit 1
 }
 
-TARGET_SCRIPT="${REPO_ROOT}/scripts/sbatch/train_pi0_ur5_real_robot_cross_attn_fg_distill_stage2_gt_hard.sbatch"
+TARGET_SCRIPT="${REPO_ROOT}/scripts/sbatch/train_pi05_ur5_real_robot_cross_attn_fg_distill_stage1_stage2_hard_smoke.sbatch"
 
 SBATCH_ACCOUNT=${SBATCH_ACCOUNT:-}
 SBATCH_PARTITION=${SBATCH_PARTITION:-}
@@ -48,23 +48,17 @@ SBATCH_ARGS=()
 [[ -n "${SBATCH_CPUS}" ]] && SBATCH_ARGS+=(--cpus-per-task="${SBATCH_CPUS}")
 [[ -n "${SBATCH_MEM}" ]] && SBATCH_ARGS+=(--mem="${SBATCH_MEM}")
 
-echo "Submitting UR5 real-robot fg + hard Stage 2 GT"
+echo "Submitting pi0.5 UR5 real-robot fg + hard Stage 1 + Stage 2 smoke"
 echo "repo root: ${REPO_ROOT}"
 echo "target script: ${TARGET_SCRIPT}"
-echo "config: ${CONFIG_NAME:-pi0_ur5_real_robot_pytorch_cross_attn_fg_distill_stage2_hard}"
 echo "dataset dir: ${DATASET_DIR:-/scratch/${USER}/real_robot_data/ur5_lab_test_tube_camera_shifts}"
-echo "norm stats root: ${REAL_ROBOT_NORM_ROOT:-/scratch/${USER}/pi0_ur5_real_robot}"
-echo "gt target root: ${REAL_ROBOT_PI3X_TARGETS_224_BASE_DIR:-/scratch/${USER}/pi3x_targets_224}/ur5_lab_test_tube_camera_shifts"
-echo "stage1 checkpoint root: ${STAGE1_CHECKPOINT_ROOT:-/scratch/${USER}/tmp/openpi_cam/checkpoints/pi0_ur5_real_robot_pytorch_cross_attn_fg_distill_stage1_hard/pi0_ur5_real_robot_cross_attn_fg_distill_gt_hard_stage1_1gpu}"
-echo "stage1 checkpoint step: ${STAGE1_CHECKPOINT_STEP:-5000}"
-echo "checkpoint base dir: ${CHECKPOINT_BASE_DIR:-/scratch/${USER}/tmp/openpi_cam/checkpoints}"
-echo "exp name: ${EXP_NAME:-pi0_ur5_real_robot_cross_attn_fg_distill_gt_hard_stage2}"
-echo "default account: ${SBATCH_ACCOUNT:-torch_pr_69_tandon_advanced}"
-echo "default partition: ${SBATCH_PARTITION:-h100_tandon,h200_tandon}"
-echo "default gres: ${SBATCH_GRES:-gpu:4}"
-echo "default time: ${SBATCH_TIME:-48:00:00}"
-echo "default num workers: ${NUM_WORKERS:-8}"
-echo "default num train steps: ${NUM_TRAIN_STEPS:-30000}"
-echo "default save interval: ${SAVE_INTERVAL:-5000}"
+echo "pi3x target root: ${PI3X_TARGETS_ROOT_OVERRIDE:-${REAL_ROBOT_PI3X_TARGETS_224_BASE_DIR:-/scratch/${USER}/pi3x_targets_224}/ur5_lab_test_tube_camera_shifts}"
+echo "stage1 exp: ${STAGE1_EXP_NAME:-pi05_ur5_real_robot_cross_attn_fg_distill_hard_stage1_targetfix_smoke}"
+echo "stage2 exp: ${STAGE2_EXP_NAME:-pi05_ur5_real_robot_cross_attn_fg_distill_hard_stage2_targetfix_smoke}"
+echo "default partition: ${SBATCH_PARTITION:-h100_tandon,h200_tandon,a100_tandon}"
+echo "default gres: ${SBATCH_GRES:-gpu:1}"
+echo "default time: ${SBATCH_TIME:-00:45:00}"
+echo "default workers per GPU/rank: ${NUM_WORKERS:-2}"
+echo "default batch size: ${BATCH_SIZE:-2}"
 
 sbatch "${SBATCH_ARGS[@]}" "${TARGET_SCRIPT}"
