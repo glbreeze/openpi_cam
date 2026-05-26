@@ -73,7 +73,7 @@ export GT_POINT_TARGETS_ROOT_OVERRIDE="${GT_POINT_TARGETS_ROOT_OVERRIDE:-${OPENP
 export CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-/scratch/${USER}/tmp/openpi_cam/checkpoints}"
 
 export NUM_GPUS="${NUM_GPUS:-2}"
-export NUM_WORKERS="${NUM_WORKERS:-4}"
+export NUM_WORKERS="${NUM_WORKERS:-8}"
 export BATCH_SIZE="${BATCH_SIZE:-32}"
 export OPENPI_ENABLE_GPU_FILLER="${OPENPI_ENABLE_GPU_FILLER:-true}"
 export OPENPI_GPU_FILLER_LOG_DIR="${OPENPI_GPU_FILLER_LOG_DIR:-/scratch/${USER}/openpi_cam/log/pi0_ur5_pour_real_robot_ft}"
@@ -157,7 +157,7 @@ echo "camera combo: observation.images.context_left_rgb + observation.images.wri
 echo "checkpoint base: ${CHECKPOINT_BASE_DIR}"
 echo "num_gpus: ${NUM_GPUS}"
 echo "num_workers: ${NUM_WORKERS}"
-echo "workers per gpu: 2"
+echo "workers per gpu: 4"
 echo "batch_size: ${BATCH_SIZE}"
 echo "stage1 config: ${STAGE1_CONFIG_NAME}"
 echo "stage1 exp: ${STAGE1_EXP_NAME}"

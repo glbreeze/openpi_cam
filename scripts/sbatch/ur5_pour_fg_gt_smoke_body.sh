@@ -179,7 +179,13 @@ for label, cfg, action_weight, aux_weight in (
         fail(f"{label}: ray_embed must be zero-init, got init path {model.ray_embed_pi3x_init_path}")
     if abs(model.action_loss_weight - action_weight) > 1e-8:
         fail(f"{label}: action loss weight mismatch {model.action_loss_weight}")
-    if not aux.enabled or aux.loss_type != "legacy_conf_mse" or aux.output_resolution != 224:
+    if (
+        not aux.enabled
+        or aux.loss_type != "legacy_conf_mse"
+        or aux.conf_weight_mode != "hard"
+        or abs(aux.conf_threshold - 0.1) > 1e-8
+        or aux.output_resolution != 224
+    ):
         fail(f"{label}: aux head config mismatch {aux}")
     if abs(aux.loss_weight - aux_weight) > 1e-8:
         fail(f"{label}: aux loss weight mismatch {aux.loss_weight}")
@@ -282,6 +288,7 @@ PY
 run_target_loader_passthrough_check() {
   python - <<'PY'
 import os
+from pathlib import Path
 
 import numpy as np
 
@@ -290,10 +297,19 @@ from openpi.policies.libero_policy import MixedPointTargetLoader
 from openpi.policies.real_robot_policy import RealRobotUR5Inputs
 
 model_type = getattr(_model.ModelType, os.environ["SMOKE_MODEL_TYPE"])
-gt_root = os.environ["GT_POINT_TARGETS_ROOT_OVERRIDE"]
+gt_root = Path(os.environ["SMOKE_LOG_DIR"]) / "tiny_gt_passthrough"
+for subdir in ("base", "left_wrist"):
+    cam_dir = gt_root / subdir
+    cam_dir.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        cam_dir / "episode_000000.npz",
+        xy=np.zeros((1, 224, 224, 2), dtype=np.float16),
+        log_z=np.zeros((1, 224, 224, 1), dtype=np.float16),
+        conf=np.ones((1, 224, 224, 1), dtype=np.float16),
+    )
 loader = MixedPointTargetLoader(
-    pi3x_root=gt_root,
-    gt_root=gt_root,
+    pi3x_root=str(gt_root),
+    gt_root=str(gt_root),
     gt_ratio=1.0,
     cam_to_npz_subdir=(("base", "base"), ("left_wrist", "left_wrist")),
 )
@@ -395,29 +411,27 @@ for line in text.splitlines():
     if "loss_breakdown " not in line:
         continue
     metrics = {key: float(value) for key, value in re.findall(r"([a-z0-9_]+)=([0-9.eE+-]+)", line)}
-    if {"aux_loss", "aux_gt_frac", "aux_pi3x_frac"} <= metrics.keys():
+    if {"aux_loss", "aux_xy_loss", "aux_z_loss"} <= metrics.keys():
         records.append(metrics)
 if not records:
-    raise SystemExit(f"{label}: no loss_breakdown with aux_loss/aux_gt_frac/aux_pi3x_frac found in {log_file}")
+    raise SystemExit(f"{label}: no loss_breakdown with aux_loss/aux_xy_loss/aux_z_loss found in {log_file}")
 
 active = [
     record
     for record in records
-    if record["aux_loss"] > 0.0 and record["aux_gt_frac"] >= 0.99 and record["aux_pi3x_frac"] <= 0.01
+    if record["aux_loss"] > 0.0 and record["aux_xy_loss"] > 0.0 and record["aux_z_loss"] > 0.0
 ]
 if not active:
     summary = [
-        (record["aux_loss"], record["aux_gt_frac"], record["aux_pi3x_frac"])
+        (record["aux_loss"], record["aux_xy_loss"], record["aux_z_loss"])
         for record in records[:5]
     ]
-    raise SystemExit(
-        f"{label}: GT aux supervision inactive or mixed with Pi3X in {log_file}; observed {summary}"
-    )
+    raise SystemExit(f"{label}: aux supervision inactive in {log_file}; observed {summary}")
 first = active[0]
 print(
     f"{label}: GT aux supervision active; "
-    f"aux_loss={first['aux_loss']:.6g}, aux_gt_frac={first['aux_gt_frac']:.3f}, "
-    f"aux_pi3x_frac={first['aux_pi3x_frac']:.3f}"
+    f"aux_loss={first['aux_loss']:.6g}, aux_xy_loss={first['aux_xy_loss']:.6g}, "
+    f"aux_z_loss={first['aux_z_loss']:.6g}"
 )
 PY
 }

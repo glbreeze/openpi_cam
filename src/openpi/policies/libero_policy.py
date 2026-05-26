@@ -49,6 +49,22 @@ def _load_pi3x_episode(npz_path: pathlib.Path) -> tuple[np.ndarray, np.ndarray, 
     return episode
 
 
+def _load_pi3x_frame(npz_path: pathlib.Path, frame_index: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load one frame from a full-episode point-target npz without caching the episode.
+
+    The 224x224 GT caches are stored as compressed npz files, so NumPy cannot
+    memmap individual frames. Loading one member at a time and slicing
+    immediately keeps peak memory bounded by the largest single member instead
+    of retaining xy/log_z/conf for multiple cameras or episodes.
+    """
+
+    with np.load(npz_path) as f:
+        xy = np.asarray(f["xy"][frame_index], dtype=np.float32)
+        logz = np.asarray(f["log_z"][frame_index], dtype=np.float32)
+        conf = np.asarray(f["conf"][frame_index], dtype=np.float32)
+    return xy, logz, conf
+
+
 def make_libero_example() -> dict:
     """Creates a random input example for the Libero policy."""
     return {
@@ -213,6 +229,7 @@ class Pi3xLiberoTargetLoader(transforms.DataTransformFn):
         ("base", "agent"),
         ("left_wrist", "wrist"),
     )
+    pi3x_legacy_flip: bool = False
 
     def __call__(self, data: dict) -> dict:
         episode_index = int(np.asarray(data["episode_index"]).item())
@@ -222,14 +239,70 @@ class Pi3xLiberoTargetLoader(transforms.DataTransformFn):
         xy_views, logz_views, conf_views = [], [], []
         for _, subdir in self.cam_to_npz_subdir:
             npz_path = root / subdir / f"episode_{episode_index:06d}.npz"
-            xy_episode, logz_episode, conf_episode = _load_pi3x_episode(npz_path)
-            xy_views.append(np.asarray(xy_episode[frame_index], dtype=np.float32))
-            logz_views.append(np.asarray(logz_episode[frame_index], dtype=np.float32))
-            conf_views.append(np.asarray(conf_episode[frame_index], dtype=np.float32))
+            xy_frame, logz_frame, conf_frame = _load_pi3x_frame(npz_path, frame_index)
+            xy_views.append(xy_frame)
+            logz_views.append(logz_frame)
+            conf_views.append(conf_frame)
 
         data["pi3x_target_xy"] = np.stack(xy_views, axis=0)  # (V, 16, 16, 2)
         data["pi3x_target_logz"] = np.stack(logz_views, axis=0)  # (V, 16, 16, 1)
         data["pi3x_target_conf"] = np.stack(conf_views, axis=0)  # (V, 16, 16, 1)
+        return data
+
+
+@dataclasses.dataclass(frozen=True)
+class MixedPointTargetLoader(transforms.DataTransformFn):
+    """Inject GT/Pi3X point targets into the aux-loss fields.
+
+    The PyTorch point-head loss currently consumes ``pi3x_target_*`` regardless
+    of whether the source is Pi3X or human/GT supervision. This loader keeps the
+    source-agnostic ``point_target_*`` keys for diagnostics and mirrors the
+    selected target into ``pi3x_target_*`` for training.
+    """
+
+    pi3x_root: str
+    gt_root: str
+    gt_ratio: float = 0.5
+    seed: int = 0
+    cam_to_npz_subdir: tuple[tuple[str, str], ...] = (
+        ("base", "agent"),
+        ("left_wrist", "wrist"),
+    )
+    pi3x_legacy_flip: bool = False
+
+    def __call__(self, data: dict) -> dict:
+        episode_index = int(np.asarray(data["episode_index"]).item())
+        frame_index = int(np.asarray(data["frame_index"]).item())
+
+        if self.gt_ratio >= 1.0:
+            use_gt = True
+        elif self.gt_ratio <= 0.0:
+            use_gt = False
+        else:
+            rng = np.random.default_rng(self.seed + episode_index * 1_000_003 + frame_index)
+            use_gt = bool(rng.random() < self.gt_ratio)
+
+        root = pathlib.Path(self.gt_root if use_gt else self.pi3x_root).expanduser()
+        xy_views, logz_views, conf_views = [], [], []
+        for _, subdir in self.cam_to_npz_subdir:
+            npz_path = root / subdir / f"episode_{episode_index:06d}.npz"
+            xy_frame, logz_frame, conf_frame = _load_pi3x_frame(npz_path, frame_index)
+            xy_views.append(xy_frame)
+            logz_views.append(logz_frame)
+            conf_views.append(conf_frame)
+
+        xy = np.stack(xy_views, axis=0)
+        logz = np.stack(logz_views, axis=0)
+        conf = np.stack(conf_views, axis=0)
+        source = np.asarray(1.0 if use_gt else 0.0, dtype=np.float32)
+
+        data["point_target_xy"] = xy
+        data["point_target_logz"] = logz
+        data["point_target_conf"] = conf
+        data["point_target_source"] = source
+        data["pi3x_target_xy"] = xy
+        data["pi3x_target_logz"] = logz
+        data["pi3x_target_conf"] = conf
         return data
 
 
