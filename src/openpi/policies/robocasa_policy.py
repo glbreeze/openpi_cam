@@ -21,7 +21,9 @@ Image direction (verified empirically against `OpenDrawer/lerobot/videos/.../epi
 * `RoboCasaGymEnv.get_basic_observation` applies `img[::-1, :, :]` to its
   buffer before returning, and the result is also right-side-up. So the
   gym wrapper output and the LeRobot stored frames **agree** in
-  orientation. The eval client should pass through unchanged.
+  orientation. Raw robosuite/RoboCasa v0 observations do not go through
+  that wrapper and must be flipped by the eval client before sending them
+  to the policy.
 * No openpi-side `[::-1, ::-1]` flip exists in the current
   `preprocess_observation` (JAX) or `preprocess_observation_pytorch` —
   only stale comments in `libero_policy.py`. So neither training nor
@@ -32,11 +34,12 @@ K + extrinsic conventions:
 * The image is in standard image-pixel convention (y-down). K stays
   natural (positive fx, fy, cx=cy=W/2) — no `fx → -fx` adjustment.
   Mirrors the `RobotwinInputs` pass-through K path.
-* MuJoCo's `sim.data.cam_xmat` is in OpenGL camera frame (x-right, y-up,
-  z-back); the extrinsic still needs the OpenGL→OpenCV swap so that
-  `K @ T_wc^{-1} @ X_world` projects to the right pixel. We reuse
-  `libero_policy._mujoco_to_opencv_extrinsic` for that (negates columns
-  1 and 2 of the rotation block).
+* Raw MuJoCo `sim.data.cam_xmat` is in OpenGL camera frame (x-right, y-up,
+  z-back). It must be converted to OpenCV camera frame before PRoPE / ray
+  embedding. Some RoboCasa24 LeRobot exports already store OpenCV-frame
+  camera-to-world matrices, so `RobocasaCamInputs` has an explicit
+  `extrinsics_are_opencv` switch. The default keeps the legacy raw-MuJoCo
+  behavior used by existing checkpoints.
 """
 
 from __future__ import annotations
@@ -237,12 +240,13 @@ class RobocasaCamInputs(transforms.DataTransformFn):
     all three cams. K is passed through unchanged (right-side-up image, no
     flip in the openpi pipeline — see module docstring). T_wc is the
     OpenGL→OpenCV camera-frame swap from `libero_policy._mujoco_to_opencv_extrinsic`
-    (negate columns 1 and 2 of the rotation block).
+    (negate columns 1 and 2 of the rotation block) unless
+    `extrinsics_are_opencv=True`.
 
     Expected dataset keys (post repack into `observation/*` form by the data
     config):
 
-        observation/agentview_left_extrinsic   (4, 4) MuJoCo cam-to-world
+        observation/agentview_left_extrinsic   (4, 4) cam-to-world
         observation/agentview_left_intrinsic   (3, 3) natural OpenGL K
         observation/agentview_right_extrinsic
         observation/agentview_right_intrinsic
@@ -257,6 +261,7 @@ class RobocasaCamInputs(transforms.DataTransformFn):
     """
 
     model_type: _model.ModelType
+    extrinsics_are_opencv: bool = False
 
     def __call__(self, data: dict) -> dict:
         out = RobocasaInputs(model_type=self.model_type)(data)
@@ -272,7 +277,10 @@ class RobocasaCamInputs(transforms.DataTransformFn):
                 f"observation/{src_cam}_extrinsic",
             ):
                 if ext_key in data:
-                    out[f"{dst_cam}_extrinsic"] = libero_policy._mujoco_to_opencv_extrinsic(data[ext_key])  # noqa: SLF001
+                    ext = np.asarray(data[ext_key], dtype=np.float32)
+                    if not self.extrinsics_are_opencv:
+                        ext = libero_policy._mujoco_to_opencv_extrinsic(ext)  # noqa: SLF001
+                    out[f"{dst_cam}_extrinsic"] = ext
                     break
             for intr_key in (
                 f"observation.{src_cam}_intrinsic",

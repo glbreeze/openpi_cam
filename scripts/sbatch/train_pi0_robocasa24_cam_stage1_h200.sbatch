@@ -5,11 +5,11 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=32
-#SBATCH --mem=256G
+#SBATCH --mem=512G
 #SBATCH --time=12:00:00
-#SBATCH --account=torch_pr_637_tandon_advanced
-#SBATCH --partition=h200_tandon
-#SBATCH --gres=gpu:h200:4
+#SBATCH --account=torch_pr_676_tandon_advanced
+#SBATCH --partition=h100_tandon
+#SBATCH --gres=gpu:h100:1
 #SBATCH --export=ALL
 #
 # RoboCasa24 all-task cam-aware Pi0 stage 1.
@@ -35,7 +35,7 @@ export OPENPI_DATA_HOME=${OPENPI_DATA_HOME:-${OPENPI_CACHE_DIR}}
 export ROBOCASA24_LEROBOT_ROOT=${ROBOCASA24_LEROBOT_ROOT:-/scratch/yz11445/robocasa24/all24_human_camaware}
 export ROBOCASA24_ASSETS_DIR=${ROBOCASA24_ASSETS_DIR:-/scratch/yz11445/pi0_robocasa24}
 export ROBOCASA24_BUNDLE=${ROBOCASA24_BUNDLE:-/scratch/yz11445/robocasa-human50}
-export ROBOCASA24_PI3X_TARGETS_ROOT=${ROBOCASA24_PI3X_TARGETS_ROOT:-${ROBOCASA24_BUNDLE}/pi3x_targets_224}
+export ROBOCASA24_PI3X_TARGETS_ROOT=${ROBOCASA24_PI3X_TARGETS_ROOT:-/scratch/yz11445/pi3x_targets_224/robocasa24_all24_human_camaware}
 
 if [[ ! -d "${ROBOCASA24_PI3X_TARGETS_ROOT}" ]]; then
     echo "ERROR: full-res Pi3X target cache not found at ${ROBOCASA24_PI3X_TARGETS_ROOT}" >&2
@@ -55,6 +55,10 @@ unset TRANSFORMERS_CACHE
 
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 export TOKENIZERS_PARALLELISM=${TOKENIZERS_PARALLELISM:-false}
+export OPENPI_MICRO_BATCH_SIZE=${OPENPI_MICRO_BATCH_SIZE:-64}
+export OPENPI_DATALOADER_PREFETCH_FACTOR=${OPENPI_DATALOADER_PREFETCH_FACTOR:-4}
+export WANDB_MODE=${WANDB_MODE:-disabled}
+export WANDB_DISABLED=${WANDB_DISABLED:-true}
 export WANDB_PROJECT=${WANDB_PROJECT:-pi0_robocasa24_cam}
 export WANDB_ENTITY=${WANDB_ENTITY:-NYU-robotics}
 export WANDB_DIR=${WANDB_DIR:-${REPO_ROOT}/log/wandb}
@@ -68,6 +72,9 @@ echo "assets_dir    : ${ROBOCASA24_ASSETS_DIR}"
 echo "pi3x_root     : ${ROBOCASA24_PI3X_TARGETS_ROOT}"
 echo "gt_root       : <disabled>"
 echo "n gpus        : ${SLURM_GPUS_ON_NODE:-4}"
+echo "micro batch   : ${OPENPI_MICRO_BATCH_SIZE}"
+echo "num workers   : ${NUM_WORKERS:-16}"
+echo "prefetch      : ${OPENPI_DATALOADER_PREFETCH_FACTOR}"
 hostname
 python -V
 date
@@ -81,9 +88,9 @@ uv run torchrun --standalone --nnodes=1 --nproc_per_node=${NUM_GPUS:-${SLURM_GPU
     scripts/train_pytorch.py \
     pi0_robocasa24_all24_cam_prope_ray_view_distill_fullres_stage1 \
     --exp_name=${EXP_NAME} \
-    --batch_size=${BATCH_SIZE:-32} \
+    --batch_size=${BATCH_SIZE:-64} \
     --num_workers=${NUM_WORKERS:-16} \
     --num_train_steps=${NUM_TRAIN_STEPS:-5000} \
-    --save_interval=${SAVE_INTERVAL:-1000} \
+    --save_interval=${SAVE_INTERVAL:-200} \
     --keep_period=${KEEP_PERIOD:-5000} \
     "${EXTRA_ARGS[@]}"
