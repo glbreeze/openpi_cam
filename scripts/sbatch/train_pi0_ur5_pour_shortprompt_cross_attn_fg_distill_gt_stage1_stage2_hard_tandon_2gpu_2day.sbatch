@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=pi05_ur5_fg_gt_s1s2_tdn_2g
-#SBATCH --output=/scratch/%u/openpi_cam/log/pi0_ur5_real_robot_ft/slurm-%j.out
-#SBATCH --error=/scratch/%u/openpi_cam/log/pi0_ur5_real_robot_ft/slurm-%j.err
+#SBATCH --job-name=pi0_pour_short_fg_gt_s1s2_tdn_2g
+#SBATCH --output=/scratch/%u/openpi_cam/log/pi0_ur5_pour_real_robot_ft/slurm-%j.out
+#SBATCH --error=/scratch/%u/openpi_cam/log/pi0_ur5_pour_real_robot_ft/slurm-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=32
@@ -60,28 +60,28 @@ export WANDB_CONFIG_DIR="${WANDB_CONFIG_DIR:-/scratch/${USER}/.config/wandb}"
 export WANDB_CACHE_DIR="${WANDB_CACHE_DIR:-/scratch/${USER}/.cache/wandb}"
 
 export OPENPI_GEO_ROOT="${OPENPI_GEO_ROOT:-/scratch/${USER}}"
-export OPENPI_PI0_BASE_DIR="${OPENPI_PI0_BASE_DIR:-${OPENPI_GEO_ROOT}/pi05_base}"
-export REAL_ROBOT_NORM_ROOT="${REAL_ROBOT_NORM_ROOT:-${OPENPI_GEO_ROOT}/pi05_ur5_real_robot}"
+export OPENPI_PI0_BASE_DIR="${OPENPI_PI0_BASE_DIR:-${OPENPI_GEO_ROOT}/pi0_base}"
+export REAL_ROBOT_NORM_ROOT="${REAL_ROBOT_NORM_ROOT:-${OPENPI_GEO_ROOT}/pi0_ur5_real_robot}"
 export OPENPI_PI0_LIBERO_NORM_DIR="${REAL_ROBOT_NORM_ROOT}"
 export HF_LEROBOT_HOME="${HF_LEROBOT_HOME:-${OPENPI_GEO_ROOT}/.huggingface/lerobot}"
 
-export DATASET_DIR="${DATASET_DIR:-/scratch/${USER}/real_robot_data/ur5_lab_test_tube_camera_shifts}"
-export DATASET_REPO_ID="${DATASET_REPO_ID:-ur5_lab_test_tube_camera_shifts}"
-export NORM_ASSET_ID="${NORM_ASSET_ID:-ur5_lab_test_tube_camera_shifts}"
+export DATASET_DIR="${DATASET_DIR:-/scratch/${USER}/real_robot_data/ur5_place_and_pour_nuts_camera_shifts_shortprompt}"
+export DATASET_REPO_ID="${DATASET_REPO_ID:-ur5_place_and_pour_nuts_camera_shifts}"
+export NORM_ASSET_ID="${NORM_ASSET_ID:-ur5_place_and_pour_nuts_camera_shifts}"
 export PI3X_TARGETS_ROOT_OVERRIDE="${PI3X_TARGETS_ROOT_OVERRIDE:-}"
-export GT_POINT_TARGETS_ROOT_OVERRIDE="${GT_POINT_TARGETS_ROOT_OVERRIDE:-${OPENPI_GEO_ROOT}/gt_point_targets_grid224/ur5_lab_test_tube_camera_shifts}"
+export GT_POINT_TARGETS_ROOT_OVERRIDE="${GT_POINT_TARGETS_ROOT_OVERRIDE:-${OPENPI_GEO_ROOT}/gt_point_targets_grid224/ur5_place_and_pour_nuts_camera_shifts}"
 export CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-/scratch/${USER}/tmp/openpi_cam/checkpoints}"
 
 export NUM_GPUS="${NUM_GPUS:-2}"
 export NUM_WORKERS="${NUM_WORKERS:-8}"
 export BATCH_SIZE="${BATCH_SIZE:-16}"
 export OPENPI_ENABLE_GPU_FILLER="${OPENPI_ENABLE_GPU_FILLER:-true}"
-export OPENPI_GPU_FILLER_LOG_DIR="${OPENPI_GPU_FILLER_LOG_DIR:-/scratch/${USER}/openpi_cam/log/pi0_ur5_real_robot_ft}"
+export OPENPI_GPU_FILLER_LOG_DIR="${OPENPI_GPU_FILLER_LOG_DIR:-/scratch/${USER}/openpi_cam/log/pi0_ur5_pour_real_robot_ft}"
 
-STAGE1_CONFIG_NAME="${STAGE1_CONFIG_NAME:-pi05_ur5_real_robot_pytorch_cross_attn_fg_distill_gt_stage1_hard}"
-STAGE2_CONFIG_NAME="${STAGE2_CONFIG_NAME:-pi05_ur5_real_robot_pytorch_cross_attn_fg_distill_gt_stage2_hard}"
-STAGE1_EXP_NAME="${STAGE1_EXP_NAME:-pi05_ur5_real_robot_cross_attn_fg_distill_gt_hard_stage1_tandon_2gpu_b16}"
-STAGE2_EXP_NAME="${STAGE2_EXP_NAME:-pi05_ur5_real_robot_cross_attn_fg_distill_gt_hard_stage2_tandon_2gpu_b16}"
+STAGE1_CONFIG_NAME="${STAGE1_CONFIG_NAME:-pi0_ur5_pour_pytorch_cross_attn_fg_distill_gt_stage1_hard}"
+STAGE2_CONFIG_NAME="${STAGE2_CONFIG_NAME:-pi0_ur5_pour_pytorch_cross_attn_fg_distill_gt_stage2_hard}"
+STAGE1_EXP_NAME="${STAGE1_EXP_NAME:-pi0_ur5_pour_shortprompt_cross_attn_fg_zeroinit_gt_hard_stage1_tandon_2gpu_b16}"
+STAGE2_EXP_NAME="${STAGE2_EXP_NAME:-pi0_ur5_pour_shortprompt_cross_attn_fg_zeroinit_gt_hard_stage2_tandon_2gpu_b16}"
 
 STAGE1_NUM_TRAIN_STEPS="${STAGE1_NUM_TRAIN_STEPS:-5000}"
 STAGE1_CHECKPOINT_STEP="${STAGE1_CHECKPOINT_STEP:-${STAGE1_NUM_TRAIN_STEPS}}"
@@ -94,26 +94,37 @@ STAGE2_SAVE_INTERVAL="${STAGE2_SAVE_INTERVAL:-5000}"
 STAGE2_KEEP_PERIOD="${STAGE2_KEEP_PERIOD:-5000}"
 STAGE2_RESUME="${STAGE2_RESUME:-false}"
 
-mkdir -p "/scratch/${USER}/openpi_cam/log/pi0_ur5_real_robot_ft" "${CHECKPOINT_BASE_DIR}"
+mkdir -p "/scratch/${USER}/openpi_cam/log/pi0_ur5_pour_real_robot_ft" "${CHECKPOINT_BASE_DIR}"
 
 ARRAY_CACHE_ROOT="${DATASET_DIR}_array_cache"
+NORM_STATS_DIR="${REAL_ROBOT_NORM_ROOT}/${NORM_ASSET_ID}"
 CALIBRATION_ROOT="${DATASET_DIR}/pi3_scene_capture"
+
+if [[ ! -d "${DATASET_DIR}/data" || ! -f "${DATASET_DIR}/meta/info.json" || ! -f "${DATASET_DIR}/meta/episodes.jsonl" ]]; then
+  echo "Missing local LeRobot pour dataset at ${DATASET_DIR}." >&2
+  exit 1
+fi
+if [[ ! -f "${OPENPI_PI0_BASE_DIR}/model.safetensors" || ! -f "${OPENPI_PI0_BASE_DIR}/config.json" ]]; then
+  echo "Missing Pi0 base checkpoint under ${OPENPI_PI0_BASE_DIR}." >&2
+  exit 1
+fi
+if [[ ! -f "${NORM_STATS_DIR}/norm_stats.json" ]]; then
+  echo "Missing Pi0 pour norm stats at ${NORM_STATS_DIR}/norm_stats.json." >&2
+  exit 1
+fi
 if [[ ! -f "${CALIBRATION_ROOT}/intrinsics.yaml" || ! -f "${CALIBRATION_ROOT}/extrinsics_per_frame.parquet" ]]; then
   echo "Missing pi3_scene_capture calibration files under ${CALIBRATION_ROOT}." >&2
   exit 1
 fi
-
 if [[ ! -d "${ARRAY_CACHE_ROOT}/videos/chunk-000/observation.images.context_left_rgb" ||
       ! -d "${ARRAY_CACHE_ROOT}/videos/chunk-000/observation.images.wrist_right_rgb" ]]; then
   echo "Missing local video array cache for context_left_rgb and wrist_right_rgb under ${ARRAY_CACHE_ROOT}." >&2
   exit 1
 fi
-
 if [[ -n "${PI3X_TARGETS_ROOT_OVERRIDE}" ]]; then
   echo "PI3X_TARGETS_ROOT_OVERRIDE must be empty for this GT-only run, got: ${PI3X_TARGETS_ROOT_OVERRIDE}" >&2
   exit 1
 fi
-
 if [[ ! -d "${GT_POINT_TARGETS_ROOT_OVERRIDE}/base" ||
       ! -d "${GT_POINT_TARGETS_ROOT_OVERRIDE}/left_wrist" ]]; then
   echo "Missing GT target subdirs under ${GT_POINT_TARGETS_ROOT_OVERRIDE}; expected base/ and left_wrist/." >&2
@@ -126,15 +137,8 @@ left_wrist_npzs=("${GT_POINT_TARGETS_ROOT_OVERRIDE}"/left_wrist/episode_*.npz)
 context_left_cache=("${ARRAY_CACHE_ROOT}"/videos/chunk-000/observation.images.context_left_rgb/episode_*.npy)
 wrist_right_cache=("${ARRAY_CACHE_ROOT}"/videos/chunk-000/observation.images.wrist_right_rgb/episode_*.npy)
 shopt -u nullglob
+
 episode_count=$(grep -cve '^[[:space:]]*$' "${DATASET_DIR}/meta/episodes.jsonl")
-if [[ "${#base_npzs[@]}" -eq 0 || "${#left_wrist_npzs[@]}" -eq 0 ]]; then
-  echo "GT target subdirs exist but episode npz files are missing under ${GT_POINT_TARGETS_ROOT_OVERRIDE}." >&2
-  exit 1
-fi
-if [[ "${#context_left_cache[@]}" -eq 0 || "${#wrist_right_cache[@]}" -eq 0 ]]; then
-  echo "Array cache subdirs exist but episode npy files are missing under ${ARRAY_CACHE_ROOT}." >&2
-  exit 1
-fi
 if [[ "${#base_npzs[@]}" -ne "${episode_count}" || "${#left_wrist_npzs[@]}" -ne "${episode_count}" ]]; then
   echo "GT cache file count mismatch: episodes=${episode_count}, base=${#base_npzs[@]}, left_wrist=${#left_wrist_npzs[@]}." >&2
   exit 1
@@ -148,15 +152,17 @@ run_common_launcher() {
   bash "${REPO_ROOT}/scripts/sbatch/train_pi0_libero_object_ft.sbatch"
 }
 
-echo "===== COMBINED PI0.5 UR5 GT HARD STAGE1+STAGE2 (TANDON A100/H100/H200 2 GPU) ====="
+echo "===== COMBINED PI0 UR5 POUR SHORT-PROMPT GT HARD ZERO-INIT STAGE1+STAGE2 (TANDON 2 GPU) ====="
 echo "repo root: ${REPO_ROOT}"
 echo "dataset: ${DATASET_DIR}"
 echo "array cache: ${ARRAY_CACHE_ROOT}"
-echo "norm stats root: ${REAL_ROBOT_NORM_ROOT}"
+echo "norm stats: ${NORM_STATS_DIR}"
 echo "gt target root: ${GT_POINT_TARGETS_ROOT_OVERRIDE}"
+echo "camera combo: observation.images.context_left_rgb + observation.images.wrist_right_rgb"
 echo "checkpoint base: ${CHECKPOINT_BASE_DIR}"
 echo "num_gpus: ${NUM_GPUS}"
 echo "num_workers: ${NUM_WORKERS}"
+echo "num_workers per rank/gpu: ${NUM_WORKERS}"
 echo "batch_size: ${BATCH_SIZE}"
 echo "stage1 config: ${STAGE1_CONFIG_NAME}"
 echo "stage1 exp: ${STAGE1_EXP_NAME}"

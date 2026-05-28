@@ -32,6 +32,7 @@ REPO_ROOT=${REPO_ROOT:-$(resolve_repo_root)} || {
 }
 
 TARGET_SCRIPT="${REPO_ROOT}/scripts/sbatch/infer_pi0_robocasa24_all24_baseline_20k_l40s_1h.sbatch"
+ROBOCASA_ENV=${ROBOCASA_ENV:-/scratch/${USER}/.venvs/robocasa24}
 
 SBATCH_ACCOUNT=${SBATCH_ACCOUNT:-torch_pr_926_general}
 SBATCH_PARTITION=${SBATCH_PARTITION:-l40s_public}
@@ -66,4 +67,4 @@ echo "time            : ${SBATCH_TIME}"
 echo "cpus            : ${SBATCH_CPUS}"
 echo "mem             : ${SBATCH_MEM}"
 
-sbatch "${SBATCH_ARGS[@]}" "${TARGET_SCRIPT}"
+sbatch --export=ALL,ROBOCASA_ENV="${ROBOCASA_ENV}" "${SBATCH_ARGS[@]}" "${TARGET_SCRIPT}"

@@ -5,17 +5,27 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import site
 from pathlib import Path
 from typing import Any
+
+for extra_site_dir in os.environ.get("OPENPI_EXTRA_SITE_DIRS", "").split(":"):
+    if extra_site_dir:
+        site.addsitedir(extra_site_dir)
 
 import gymnasium as gym
 import imageio
 import numpy as np
 import robocasa  # noqa: F401
-import robocasa.wrappers.gym_wrapper as robocasa_gym_wrapper
 import robosuite  # noqa: F401
 
 from openpi_client import websocket_client_policy
+
+try:
+    import robocasa.wrappers.gym_wrapper as robocasa_gym_wrapper
+except ModuleNotFoundError:
+    robocasa_gym_wrapper = None
 
 
 CAM_KEYS = {
@@ -38,6 +48,10 @@ BASE_MOTION_DEADZONE = 0.02
 
 def _patch_eval_action_unmap() -> None:
     """Eval-only patch for RoboCasa PandaOmron action thresholding."""
+
+    if robocasa_gym_wrapper is None:
+        logging.warning("robocasa.wrappers.gym_wrapper is unavailable; skipping eval action monkey patch.")
+        return
 
     def unmap_action(cls, input_action):
         return {

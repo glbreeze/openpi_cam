@@ -804,6 +804,13 @@ class LeRobotRealRobotUR5DataConfig(DataConfigFactory):
     base_camera_key: str = "observation.images.context_left_rgb"
     # Which wrist camera stream to use as the baseline wrist image.
     wrist_camera_key: str = "observation.images.wrist_right_rgb"
+    # The real-robot datasets keep camera calibration next to the LeRobot data
+    # instead of as row features. Load it from pi3_scene_capture so ray_embed
+    # and PRoPE receive real context-left / wrist-right camera geometry.
+    use_pi3_scene_calibration: bool = True
+    pi3_scene_calibration_root: str | None = None
+    base_calibration_camera_name: str = "context_left"
+    wrist_calibration_camera_name: str = "wrist_right"
     # Optional Pi3X / GT point-target caches for supervising the auxiliary point
     # head on the real-robot UR5 streams. The cache layout matches the Libero
     # loaders: {root}/{cam}/episode_NNNNNN.npz with cam subdirs defined below.
@@ -827,11 +834,26 @@ class LeRobotRealRobotUR5DataConfig(DataConfigFactory):
             "actions": "action",
             "prompt": "prompt",
         }
-        if self.pi3x_targets_root is not None or self.gt_point_targets_root is not None:
+        if (
+            self.use_pi3_scene_calibration
+            or self.pi3x_targets_root is not None
+            or self.gt_point_targets_root is not None
+        ):
             repack_structure["episode_index"] = "episode_index"
             repack_structure["frame_index"] = "frame_index"
 
         repack_inputs = [_transforms.RepackTransform(repack_structure)]
+        if self.use_pi3_scene_calibration:
+            calibration_root = self.pi3_scene_calibration_root
+            if calibration_root is None:
+                calibration_root = str(pathlib.Path(self.local_dataset_root) / "pi3_scene_capture")
+            repack_inputs.append(
+                real_robot_policy.Pi3SceneCalibrationLoader(
+                    calibration_root=calibration_root,
+                    base_camera_name=self.base_calibration_camera_name,
+                    wrist_camera_name=self.wrist_calibration_camera_name,
+                )
+            )
         if self.pi3x_targets_root is not None and self.gt_point_targets_root is not None:
             if self.point_target_mix_mode == "sample":
                 repack_inputs.append(
@@ -2254,6 +2276,31 @@ _CONFIGS = [
         num_train_steps=30_000,
     ),
     TrainConfig(
+        name="pi05_ur5_real_robot_pytorch_baseline",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(enabled=False),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotRealRobotUR5DataConfig(
+            repo_id="ur5_lab_test_tube_camera_shifts",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi05_ur5_real_robot"),
+                asset_id="ur5_lab_test_tube_camera_shifts",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi05_base"),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
         name="pi0_ur5_real_robot_pytorch_cross_attn_fg_distill_stage1_hard",
         model=pi0_config.Pi0Config(
             pose_enc_type="prope",
@@ -2678,6 +2725,31 @@ _CONFIGS = [
                 ("base", "base"),
                 ("left_wrist", "left_wrist"),
             ),
+        ),
+        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi05_base"),
+        num_train_steps=30_000,
+    ),
+    TrainConfig(
+        name="pi05_ur5_pour_pytorch_baseline",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            pose_enc_type="null",
+            ray_enc_type=False,
+            view_enc_type=False,
+            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
+            disable_geometric_augs=True,
+            action_loss_weight=1.0,
+            aux_point_head=point_head_config.AuxPointHeadConfig(enabled=False),
+            ray_embed_pi3x_init_path=None,
+            ray_embed_pi3x_init_scale=1.0,
+        ),
+        data=LeRobotRealRobotUR5DataConfig(
+            repo_id="ur5_place_and_pour_nuts_camera_shifts",
+            assets=AssetsConfig(
+                assets_dir=str(LOCAL_GEO_ROOT / "pi05_ur5_real_robot"),
+                asset_id="ur5_place_and_pour_nuts_camera_shifts",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
         ),
         pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi05_base"),
         num_train_steps=30_000,

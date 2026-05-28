@@ -31,7 +31,10 @@ REPO_ROOT=${REPO_ROOT:-$(resolve_repo_root)} || {
   exit 1
 }
 
-TARGET_SCRIPT="${REPO_ROOT}/scripts/sbatch/train_pi05_ur5_real_robot_cross_attn_fg_distill_stage1_stage2_hard_a100_2gpu_2day.sbatch"
+TARGET_SCRIPT="${REPO_ROOT}/scripts/sbatch/train_pi0_ur5_pour_shortprompt_cross_attn_fg_distill_gt_stage1_stage2_hard_tandon_2gpu_2day.sbatch"
+DEFAULT_DATASET_DIR="/scratch/${USER}/real_robot_data/ur5_place_and_pour_nuts_camera_shifts_shortprompt"
+DEFAULT_NORM_ROOT="/scratch/${USER}/pi0_ur5_real_robot"
+DEFAULT_GT_ROOT="/scratch/${USER}/gt_point_targets_grid224/ur5_place_and_pour_nuts_camera_shifts"
 
 SBATCH_ACCOUNT=${SBATCH_ACCOUNT:-torch_pr_69_tandon_advanced}
 SBATCH_PARTITION=${SBATCH_PARTITION:-a100_tandon,h100_tandon,h200_tandon}
@@ -48,18 +51,19 @@ SBATCH_ARGS=()
 [[ -n "${SBATCH_CPUS}" ]] && SBATCH_ARGS+=(--cpus-per-task="${SBATCH_CPUS}")
 [[ -n "${SBATCH_MEM}" ]] && SBATCH_ARGS+=(--mem="${SBATCH_MEM}")
 
-echo "Submitting pi0.5 UR5 real-robot fg + hard combined Stage 1 + Stage 2 (Tandon A100/H100/H200, 2 GPU, 2 day)"
+echo "Submitting Pi0 UR5 pour short-prompt fg + hard GT zero-init combined Stage 1 + Stage 2 (Tandon 2 GPU)"
 echo "repo root: ${REPO_ROOT}"
 echo "target script: ${TARGET_SCRIPT}"
-echo "dataset dir: ${DATASET_DIR:-/scratch/${USER}/real_robot_data/ur5_lab_test_tube_camera_shifts}"
-echo "norm stats root: ${REAL_ROBOT_NORM_ROOT:-/scratch/${USER}/pi05_ur5_real_robot}"
-echo "pi3x target root: ${PI3X_TARGETS_ROOT_OVERRIDE:-${REAL_ROBOT_PI3X_TARGETS_224_BASE_DIR:-/scratch/${USER}/pi3x_targets_224}/ur5_lab_test_tube_camera_shifts}"
+echo "dataset dir: ${DATASET_DIR:-${DEFAULT_DATASET_DIR}}"
+echo "array cache dir: ${DATASET_DIR:-${DEFAULT_DATASET_DIR}}_array_cache"
+echo "norm stats root: ${REAL_ROBOT_NORM_ROOT:-${DEFAULT_NORM_ROOT}}"
+echo "gt target root: ${GT_POINT_TARGETS_ROOT_OVERRIDE:-${DEFAULT_GT_ROOT}}"
 echo "checkpoint base dir: ${CHECKPOINT_BASE_DIR:-/scratch/${USER}/tmp/openpi_cam/checkpoints}"
-echo "stage1 config: ${STAGE1_CONFIG_NAME:-pi05_ur5_real_robot_pytorch_cross_attn_fg_distill_stage1_hard}"
-echo "stage1 exp: ${STAGE1_EXP_NAME:-pi05_ur5_real_robot_cross_attn_fg_distill_hard_stage1_tandon_2gpu_b16}"
+echo "stage1 config: ${STAGE1_CONFIG_NAME:-pi0_ur5_pour_pytorch_cross_attn_fg_distill_gt_stage1_hard}"
+echo "stage1 exp: ${STAGE1_EXP_NAME:-pi0_ur5_pour_shortprompt_cross_attn_fg_zeroinit_gt_hard_stage1_tandon_2gpu_b16}"
 echo "stage1 steps: ${STAGE1_NUM_TRAIN_STEPS:-5000}"
-echo "stage2 config: ${STAGE2_CONFIG_NAME:-pi05_ur5_real_robot_pytorch_cross_attn_fg_distill_stage2_hard}"
-echo "stage2 exp: ${STAGE2_EXP_NAME:-pi05_ur5_real_robot_cross_attn_fg_distill_hard_stage2_tandon_2gpu_b16}"
+echo "stage2 config: ${STAGE2_CONFIG_NAME:-pi0_ur5_pour_pytorch_cross_attn_fg_distill_gt_stage2_hard}"
+echo "stage2 exp: ${STAGE2_EXP_NAME:-pi0_ur5_pour_shortprompt_cross_attn_fg_zeroinit_gt_hard_stage2_tandon_2gpu_b16}"
 echo "stage2 steps: ${STAGE2_NUM_TRAIN_STEPS:-30000}"
 echo "default account: ${SBATCH_ACCOUNT}"
 echo "default partition: ${SBATCH_PARTITION}"

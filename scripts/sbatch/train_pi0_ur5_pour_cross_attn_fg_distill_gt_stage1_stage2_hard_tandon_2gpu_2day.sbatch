@@ -74,14 +74,14 @@ export CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-/scratch/${USER}/tmp/openpi_c
 
 export NUM_GPUS="${NUM_GPUS:-2}"
 export NUM_WORKERS="${NUM_WORKERS:-8}"
-export BATCH_SIZE="${BATCH_SIZE:-32}"
+export BATCH_SIZE="${BATCH_SIZE:-16}"
 export OPENPI_ENABLE_GPU_FILLER="${OPENPI_ENABLE_GPU_FILLER:-true}"
 export OPENPI_GPU_FILLER_LOG_DIR="${OPENPI_GPU_FILLER_LOG_DIR:-/scratch/${USER}/openpi_cam/log/pi0_ur5_pour_real_robot_ft}"
 
 STAGE1_CONFIG_NAME="${STAGE1_CONFIG_NAME:-pi0_ur5_pour_pytorch_cross_attn_fg_distill_gt_stage1_hard}"
 STAGE2_CONFIG_NAME="${STAGE2_CONFIG_NAME:-pi0_ur5_pour_pytorch_cross_attn_fg_distill_gt_stage2_hard}"
-STAGE1_EXP_NAME="${STAGE1_EXP_NAME:-pi0_ur5_pour_cross_attn_fg_zeroinit_gt_hard_stage1_tandon_2gpu_b32}"
-STAGE2_EXP_NAME="${STAGE2_EXP_NAME:-pi0_ur5_pour_cross_attn_fg_zeroinit_gt_hard_stage2_tandon_2gpu_b32}"
+STAGE1_EXP_NAME="${STAGE1_EXP_NAME:-pi0_ur5_pour_cross_attn_fg_zeroinit_gt_hard_stage1_tandon_2gpu_b16}"
+STAGE2_EXP_NAME="${STAGE2_EXP_NAME:-pi0_ur5_pour_cross_attn_fg_zeroinit_gt_hard_stage2_tandon_2gpu_b16}"
 
 STAGE1_NUM_TRAIN_STEPS="${STAGE1_NUM_TRAIN_STEPS:-5000}"
 STAGE1_CHECKPOINT_STEP="${STAGE1_CHECKPOINT_STEP:-${STAGE1_NUM_TRAIN_STEPS}}"
@@ -98,6 +98,7 @@ mkdir -p "/scratch/${USER}/openpi_cam/log/pi0_ur5_pour_real_robot_ft" "${CHECKPO
 
 ARRAY_CACHE_ROOT="${DATASET_DIR}_array_cache"
 NORM_STATS_DIR="${REAL_ROBOT_NORM_ROOT}/${NORM_ASSET_ID}"
+CALIBRATION_ROOT="${DATASET_DIR}/pi3_scene_capture"
 
 if [[ ! -d "${DATASET_DIR}/data" || ! -f "${DATASET_DIR}/meta/info.json" || ! -f "${DATASET_DIR}/meta/episodes.jsonl" ]]; then
   echo "Missing local LeRobot pour dataset at ${DATASET_DIR}." >&2
@@ -109,6 +110,10 @@ if [[ ! -f "${OPENPI_PI0_BASE_DIR}/model.safetensors" || ! -f "${OPENPI_PI0_BASE
 fi
 if [[ ! -f "${NORM_STATS_DIR}/norm_stats.json" ]]; then
   echo "Missing Pi0 pour norm stats at ${NORM_STATS_DIR}/norm_stats.json." >&2
+  exit 1
+fi
+if [[ ! -f "${CALIBRATION_ROOT}/intrinsics.yaml" || ! -f "${CALIBRATION_ROOT}/extrinsics_per_frame.parquet" ]]; then
+  echo "Missing pi3_scene_capture calibration files under ${CALIBRATION_ROOT}." >&2
   exit 1
 fi
 if [[ ! -d "${ARRAY_CACHE_ROOT}/videos/chunk-000/observation.images.context_left_rgb" ||
@@ -157,7 +162,7 @@ echo "camera combo: observation.images.context_left_rgb + observation.images.wri
 echo "checkpoint base: ${CHECKPOINT_BASE_DIR}"
 echo "num_gpus: ${NUM_GPUS}"
 echo "num_workers: ${NUM_WORKERS}"
-echo "workers per gpu: 4"
+echo "num_workers per rank/gpu: ${NUM_WORKERS}"
 echo "batch_size: ${BATCH_SIZE}"
 echo "stage1 config: ${STAGE1_CONFIG_NAME}"
 echo "stage1 exp: ${STAGE1_EXP_NAME}"

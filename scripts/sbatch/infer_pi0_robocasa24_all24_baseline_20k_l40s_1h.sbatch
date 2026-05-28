@@ -63,7 +63,7 @@ MAX_STEPS=${MAX_STEPS:-500}
 CHUNK_SIZE=${CHUNK_SIZE:-50}
 SEED=${SEED:-0}
 VIDEO_EVERY=${VIDEO_EVERY:-0}
-PORT=${PORT:-$((18000 + (${SLURM_JOB_ID:-0} % 20000)))}
+PORT=${PORT:-}
 
 LOG_ROOT=${LOG_ROOT:-${REPO_ROOT}/log/robocasa24_20k_eval/${EXP_NAME}_${CHECKPOINT_STEP}/${SLURM_JOB_ID:-manual}}
 RESULT_DIR=${RESULT_DIR:-${LOG_ROOT}/results}
@@ -91,6 +91,21 @@ export OPENPI_DATA_HOME="${OPENPI_DATA_HOME:-${OPENPI_CACHE_DIR}}"
 export OPENPI_GEO_ROOT="${OPENPI_GEO_ROOT:-${GEO_ROOT}}"
 export TOKENIZERS_PARALLELISM=false
 unset TRANSFORMERS_CACHE
+
+OPENPI_REPO_PYTHON_SITE=$("${REPO_ROOT}/.venv/bin/python" - <<'PY'
+import site
+
+for path in site.getsitepackages():
+    if path.endswith("site-packages"):
+        print(path)
+        break
+PY
+)
+if [[ -z "${OPENPI_REPO_PYTHON_SITE}" ]]; then
+  echo "Failed to locate repo .venv site-packages." >&2
+  exit 1
+fi
+export OPENPI_EXTRA_SITE_DIRS="${OPENPI_EXTRA_SITE_DIRS:+${OPENPI_EXTRA_SITE_DIRS}:}${OPENPI_REPO_PYTHON_SITE}"
 
 mkdir -p \
   "${TMPDIR}" \
@@ -168,11 +183,11 @@ find_robocasa_env() {
   local candidate
   local conda_sh
   for candidate in \
-    "${ROBOCASA_ENV}" \
     "/scratch/${USER}/.venvs/robocasa24" \
     "/scratch/${USER}/.venvs/robocasa365" \
     "/scratch/${USER}/.conda/envs/robocasa24" \
     "/scratch/${USER}/.conda/envs/robocasa365" \
+    "${ROBOCASA_ENV}" \
     "robocasa24" \
     "robocasa365"; do
     [[ -n "${candidate}" ]] || continue
@@ -227,6 +242,52 @@ if missing:
     raise SystemExit(f"missing_python_modules={' '.join(missing)}")
 print(sys.executable)
 PY
+}
+
+port_is_free() {
+  "${REPO_ROOT}/.venv/bin/python" - "${1}" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+sock = socket.socket()
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    sock.bind(("127.0.0.1", port))
+except OSError:
+    sys.exit(1)
+finally:
+    sock.close()
+PY
+}
+
+choose_server_port() {
+  local requested_port="${PORT:-}"
+  local candidate=""
+
+  if [[ -n "${requested_port}" ]]; then
+    if port_is_free "${requested_port}"; then
+      printf '%s\n' "${requested_port}"
+      return 0
+    fi
+    echo "Requested PORT=${requested_port} is already in use on 127.0.0.1." >&2
+    return 1
+  fi
+
+  candidate=$("${REPO_ROOT}/.venv/bin/python" - <<'PY'
+import socket
+
+sock = socket.socket()
+sock.bind(("127.0.0.1", 0))
+print(sock.getsockname()[1])
+sock.close()
+PY
+)
+  if [[ -z "${candidate}" ]]; then
+    echo "Failed to choose a free localhost port." >&2
+    return 1
+  fi
+  printf '%s\n' "${candidate}"
 }
 
 wait_for_server() {
@@ -285,6 +346,7 @@ date
 cd "${REPO_ROOT}"
 source "${REPO_ROOT}/scripts/env/activate_env.sh"
 export OPENPI_POLICY_ASSET_ID="${NORM_ASSET_ID}"
+PORT=$(choose_server_port)
 
 cleanup() {
   if [[ -n "${SERVER_PID:-}" ]] && kill -0 "${SERVER_PID}" 2>/dev/null; then

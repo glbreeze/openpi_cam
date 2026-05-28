@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=pi05_ur5_fg_hard_s1s2_a100_2g
+#SBATCH --job-name=pi05_ur5_fg_hard_s1s2_tdn_2g
 #SBATCH --output=/scratch/%u/openpi_cam/log/pi0_ur5_real_robot_ft/slurm-%j.out
 #SBATCH --error=/scratch/%u/openpi_cam/log/pi0_ur5_real_robot_ft/slurm-%j.err
 #SBATCH --nodes=1
@@ -8,7 +8,7 @@
 #SBATCH --mem=256G
 #SBATCH --time=48:00:00
 #SBATCH --account=torch_pr_69_tandon_advanced
-#SBATCH --partition=a100_tandon
+#SBATCH --partition=a100_tandon,h100_tandon,h200_tandon
 #SBATCH --gres=gpu:2
 #SBATCH --export=ALL
 
@@ -76,14 +76,14 @@ export CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-/scratch/${USER}/tmp/openpi_c
 
 export NUM_GPUS="${NUM_GPUS:-2}"
 export NUM_WORKERS="${NUM_WORKERS:-8}"
-export BATCH_SIZE="${BATCH_SIZE:-32}"
+export BATCH_SIZE="${BATCH_SIZE:-16}"
 export OPENPI_ENABLE_GPU_FILLER="${OPENPI_ENABLE_GPU_FILLER:-true}"
 export OPENPI_GPU_FILLER_LOG_DIR="${OPENPI_GPU_FILLER_LOG_DIR:-/scratch/${USER}/openpi_cam/log/pi0_ur5_real_robot_ft}"
 
 STAGE1_CONFIG_NAME="${STAGE1_CONFIG_NAME:-pi05_ur5_real_robot_pytorch_cross_attn_fg_distill_stage1_hard}"
 STAGE2_CONFIG_NAME="${STAGE2_CONFIG_NAME:-pi05_ur5_real_robot_pytorch_cross_attn_fg_distill_stage2_hard}"
-STAGE1_EXP_NAME="${STAGE1_EXP_NAME:-pi05_ur5_real_robot_cross_attn_fg_distill_hard_stage1_a100_2gpu_b32}"
-STAGE2_EXP_NAME="${STAGE2_EXP_NAME:-pi05_ur5_real_robot_cross_attn_fg_distill_hard_stage2_a100_2gpu_b32}"
+STAGE1_EXP_NAME="${STAGE1_EXP_NAME:-pi05_ur5_real_robot_cross_attn_fg_distill_hard_stage1_tandon_2gpu_b16}"
+STAGE2_EXP_NAME="${STAGE2_EXP_NAME:-pi05_ur5_real_robot_cross_attn_fg_distill_hard_stage2_tandon_2gpu_b16}"
 
 STAGE1_NUM_TRAIN_STEPS="${STAGE1_NUM_TRAIN_STEPS:-5000}"
 STAGE1_CHECKPOINT_STEP="${STAGE1_CHECKPOINT_STEP:-${STAGE1_NUM_TRAIN_STEPS}}"
@@ -97,6 +97,12 @@ STAGE2_KEEP_PERIOD="${STAGE2_KEEP_PERIOD:-5000}"
 STAGE2_RESUME="${STAGE2_RESUME:-false}"
 
 mkdir -p "/scratch/${USER}/tmp/openpi_cam/log/pi0_ur5_real_robot_ft" "${CHECKPOINT_BASE_DIR}"
+
+CALIBRATION_ROOT="${DATASET_DIR}/pi3_scene_capture"
+if [[ ! -f "${CALIBRATION_ROOT}/intrinsics.yaml" || ! -f "${CALIBRATION_ROOT}/extrinsics_per_frame.parquet" ]]; then
+  echo "Missing pi3_scene_capture calibration files under ${CALIBRATION_ROOT}." >&2
+  exit 1
+fi
 
 if [[ ! -d "${PI3X_TARGETS_ROOT_OVERRIDE}/agent" || ! -d "${PI3X_TARGETS_ROOT_OVERRIDE}/wrist" ]]; then
   echo "Missing Pi3X target subdirs under ${PI3X_TARGETS_ROOT_OVERRIDE}; expected agent/ and wrist/." >&2
@@ -116,7 +122,7 @@ run_common_launcher() {
   bash "${REPO_ROOT}/scripts/sbatch/train_pi0_libero_object_ft.sbatch"
 }
 
-echo "===== COMBINED PI0.5 UR5 PI3X HARD STAGE1+STAGE2 (A100 2 GPU) ====="
+echo "===== COMBINED PI0.5 UR5 PI3X HARD STAGE1+STAGE2 (TANDON A100/H100/H200 2 GPU) ====="
 echo "repo root: ${REPO_ROOT}"
 echo "dataset: ${DATASET_DIR}"
 echo "norm stats root: ${REAL_ROBOT_NORM_ROOT}"

@@ -122,6 +122,7 @@ def read_npz_member_header(path: Path, member: str):
 
 dataset_dir = Path(os.environ["DATASET_DIR"]).expanduser().resolve()
 array_cache_root = Path(f"{dataset_dir}_array_cache")
+calibration_root = dataset_dir / "pi3_scene_capture"
 gt_root = Path(os.environ["GT_POINT_TARGETS_ROOT_OVERRIDE"]).expanduser().resolve()
 norm_stats_path = Path(os.environ["REAL_ROBOT_NORM_ROOT"]) / os.environ["NORM_ASSET_ID"] / "norm_stats.json"
 expect_pi05 = os.environ["SMOKE_EXPECT_PI05"].lower() == "true"
@@ -129,6 +130,10 @@ if os.environ.get("PI3X_TARGETS_ROOT_OVERRIDE", ""):
     fail(f"Pi3X root must be empty for GT-only smoke, got {os.environ['PI3X_TARGETS_ROOT_OVERRIDE']}")
 if not norm_stats_path.exists():
     fail(f"Missing norm stats file: {norm_stats_path}")
+if not (calibration_root / "intrinsics.yaml").exists():
+    fail(f"Missing calibration intrinsics: {calibration_root / 'intrinsics.yaml'}")
+if not (calibration_root / "extrinsics_per_frame.parquet").exists():
+    fail(f"Missing calibration extrinsics: {calibration_root / 'extrinsics_per_frame.parquet'}")
 
 stage1 = _config.get_config(os.environ["STAGE1_CONFIG_NAME"])
 stage2 = _config.get_config(os.environ["STAGE2_CONFIG_NAME"])
@@ -158,6 +163,12 @@ for label, cfg, action_weight, aux_weight in (
         fail(f"{label}: base camera mismatch {data.base_camera_key!r}")
     if data.wrist_camera_key != expected_raw_cams[1]:
         fail(f"{label}: wrist camera mismatch {data.wrist_camera_key!r}")
+    if not data.use_pi3_scene_calibration:
+        fail(f"{label}: pi3_scene calibration must be enabled so ray_embed receives intrinsics")
+    if data.base_calibration_camera_name != "context_left":
+        fail(f"{label}: base calibration camera mismatch {data.base_calibration_camera_name!r}")
+    if data.wrist_calibration_camera_name != "wrist_right":
+        fail(f"{label}: wrist calibration camera mismatch {data.wrist_calibration_camera_name!r}")
     if data.pi3x_targets_root is not None:
         fail(f"{label}: config still has pi3x_targets_root={data.pi3x_targets_root}")
     if Path(data.gt_point_targets_root).expanduser().resolve() != gt_root:
@@ -294,9 +305,10 @@ import numpy as np
 
 from openpi.models import model as _model
 from openpi.policies.libero_policy import MixedPointTargetLoader
-from openpi.policies.real_robot_policy import RealRobotUR5Inputs
+from openpi.policies.real_robot_policy import Pi3SceneCalibrationLoader, RealRobotUR5Inputs
 
 model_type = getattr(_model.ModelType, os.environ["SMOKE_MODEL_TYPE"])
+calibration_root = Path(os.environ["DATASET_DIR"]) / "pi3_scene_capture"
 gt_root = Path(os.environ["SMOKE_LOG_DIR"]) / "tiny_gt_passthrough"
 for subdir in ("base", "left_wrist"):
     cam_dir = gt_root / subdir
@@ -322,6 +334,7 @@ data = {
     "actions": np.zeros((10, 7), dtype=np.float32),
     "prompt": "smoke",
 }
+data = Pi3SceneCalibrationLoader(str(calibration_root))(data)
 data = loader(data)
 if float(np.asarray(data["point_target_source"]).item()) != 1.0:
     raise SystemExit(f"GT loader returned non-GT source: {data['point_target_source']}")
@@ -333,11 +346,24 @@ if data["point_target_conf"].shape != (2, 224, 224, 1):
     raise SystemExit(f"point_target_conf shape mismatch: {data['point_target_conf'].shape}")
 
 out = RealRobotUR5Inputs(model_type)(data)
-for key in ("point_target_xy", "point_target_logz", "point_target_conf", "point_target_source"):
+for key in (
+    "agent_intrinsic",
+    "wrist_intrinsic",
+    "agent_extrinsic",
+    "wrist_extrinsic",
+    "point_target_xy",
+    "point_target_logz",
+    "point_target_conf",
+    "point_target_source",
+):
     if key not in out:
         raise SystemExit(f"{key} was dropped by RealRobotUR5Inputs")
+if out["agent_intrinsic"].shape != (3, 3) or out["wrist_intrinsic"].shape != (3, 3):
+    raise SystemExit("calibration intrinsics were not passed through as 3x3 matrices")
+if out["agent_extrinsic"].shape != (4, 4) or out["wrist_extrinsic"].shape != (4, 4):
+    raise SystemExit("calibration extrinsics were not passed through as 4x4 matrices")
 
-print("target_loader_passthrough_check_ok point_target_source=1.0")
+print("target_loader_passthrough_check_ok point_target_source=1.0 calibration_passthrough=ok")
 PY
 }
 

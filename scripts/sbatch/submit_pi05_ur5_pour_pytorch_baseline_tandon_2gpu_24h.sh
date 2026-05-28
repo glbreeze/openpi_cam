@@ -31,16 +31,20 @@ REPO_ROOT=${REPO_ROOT:-$(resolve_repo_root)} || {
   exit 1
 }
 
-TARGET_SCRIPT="${REPO_ROOT}/scripts/sbatch/train_pi05_ur5_real_robot_cross_attn_fg_distill_stage1_stage2_hard_a100_2gpu_2day.sbatch"
+TARGET_SCRIPT="${REPO_ROOT}/scripts/sbatch/train_pi05_ur5_pour_pytorch_baseline_tandon_2gpu_24h.sbatch"
 
 SBATCH_ACCOUNT=${SBATCH_ACCOUNT:-torch_pr_69_tandon_advanced}
 SBATCH_PARTITION=${SBATCH_PARTITION:-a100_tandon,h100_tandon,h200_tandon}
 SBATCH_GRES=${SBATCH_GRES:-gpu:2}
-SBATCH_TIME=${SBATCH_TIME:-48:00:00}
-SBATCH_CPUS=${SBATCH_CPUS:-32}
-SBATCH_MEM=${SBATCH_MEM:-256G}
+SBATCH_TIME=${SBATCH_TIME:-24:00:00}
+SBATCH_CPUS=${SBATCH_CPUS:-24}
+SBATCH_MEM=${SBATCH_MEM:-192G}
+SBATCH_TEST_ONLY=${SBATCH_TEST_ONLY:-false}
 
 SBATCH_ARGS=()
+if [[ "${SBATCH_TEST_ONLY}" == "true" ]]; then
+  SBATCH_ARGS+=(--test-only)
+fi
 [[ -n "${SBATCH_ACCOUNT}" ]] && SBATCH_ARGS+=(--account="${SBATCH_ACCOUNT}")
 [[ -n "${SBATCH_PARTITION}" ]] && SBATCH_ARGS+=(--partition="${SBATCH_PARTITION}")
 [[ -n "${SBATCH_GRES}" ]] && SBATCH_ARGS+=(--gres="${SBATCH_GRES}")
@@ -48,25 +52,28 @@ SBATCH_ARGS=()
 [[ -n "${SBATCH_CPUS}" ]] && SBATCH_ARGS+=(--cpus-per-task="${SBATCH_CPUS}")
 [[ -n "${SBATCH_MEM}" ]] && SBATCH_ARGS+=(--mem="${SBATCH_MEM}")
 
-echo "Submitting pi0.5 UR5 real-robot fg + hard combined Stage 1 + Stage 2 (Tandon A100/H100/H200, 2 GPU, 2 day)"
+echo "Submitting Pi0.5 UR5 pour baseline training"
 echo "repo root: ${REPO_ROOT}"
 echo "target script: ${TARGET_SCRIPT}"
-echo "dataset dir: ${DATASET_DIR:-/scratch/${USER}/real_robot_data/ur5_lab_test_tube_camera_shifts}"
+echo "test only: ${SBATCH_TEST_ONLY}"
+echo "config: ${CONFIG_NAME:-pi05_ur5_pour_pytorch_baseline}"
+echo "dataset dir: ${DATASET_DIR:-/scratch/${USER}/real_robot_data/ur5_place_and_pour_nuts_camera_shifts}"
+echo "dataset repo id: ${DATASET_REPO_ID:-ur5_place_and_pour_nuts_camera_shifts}"
+echo "array cache dir: ${DATASET_DIR:-/scratch/${USER}/real_robot_data/ur5_place_and_pour_nuts_camera_shifts}_array_cache"
 echo "norm stats root: ${REAL_ROBOT_NORM_ROOT:-/scratch/${USER}/pi05_ur5_real_robot}"
-echo "pi3x target root: ${PI3X_TARGETS_ROOT_OVERRIDE:-${REAL_ROBOT_PI3X_TARGETS_224_BASE_DIR:-/scratch/${USER}/pi3x_targets_224}/ur5_lab_test_tube_camera_shifts}"
+echo "base model dir: ${OPENPI_PI0_BASE_DIR:-/scratch/${USER}/pi05_base}"
 echo "checkpoint base dir: ${CHECKPOINT_BASE_DIR:-/scratch/${USER}/tmp/openpi_cam/checkpoints}"
-echo "stage1 config: ${STAGE1_CONFIG_NAME:-pi05_ur5_real_robot_pytorch_cross_attn_fg_distill_stage1_hard}"
-echo "stage1 exp: ${STAGE1_EXP_NAME:-pi05_ur5_real_robot_cross_attn_fg_distill_hard_stage1_tandon_2gpu_b16}"
-echo "stage1 steps: ${STAGE1_NUM_TRAIN_STEPS:-5000}"
-echo "stage2 config: ${STAGE2_CONFIG_NAME:-pi05_ur5_real_robot_pytorch_cross_attn_fg_distill_stage2_hard}"
-echo "stage2 exp: ${STAGE2_EXP_NAME:-pi05_ur5_real_robot_cross_attn_fg_distill_hard_stage2_tandon_2gpu_b16}"
-echo "stage2 steps: ${STAGE2_NUM_TRAIN_STEPS:-30000}"
+echo "exp name: ${EXP_NAME:-pi05_ur5_pour_pytorch_baseline_tandon_2gpu_b16}"
 echo "default account: ${SBATCH_ACCOUNT}"
 echo "default partition: ${SBATCH_PARTITION}"
 echo "default gres: ${SBATCH_GRES}"
+echo "default cpus-per-task: ${SBATCH_CPUS}"
+echo "default mem: ${SBATCH_MEM}"
 echo "default time: ${SBATCH_TIME}"
-echo "default cpus: ${SBATCH_CPUS}"
-echo "default workers per GPU/rank: ${NUM_WORKERS:-8}"
 echo "default batch size: ${BATCH_SIZE:-16}"
+echo "default num workers per GPU/rank: ${NUM_WORKERS:-6}"
+echo "default num train steps: ${NUM_TRAIN_STEPS:-30000}"
+echo "default save interval: ${SAVE_INTERVAL:-5000}"
+echo "default keep period: ${KEEP_PERIOD:-5000}"
 
 sbatch "${SBATCH_ARGS[@]}" "${TARGET_SCRIPT}"
