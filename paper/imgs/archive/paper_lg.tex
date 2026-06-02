@@ -1,31 +1,20 @@
-\PassOptionsToPackage{table}{xcolor}
 \documentclass{article}
-
-\usepackage[table]{xcolor}   % load this early
-\usepackage{float}
-\usepackage{corl_2026}       % load after xcolor
-
-\usepackage{booktabs}
-\usepackage{graphicx}
-\usepackage{amsmath}
-\usepackage{amssymb}
+\newcommand{\todo}[1]{\textcolor{red}{TODO: #1}}
+\usepackage{float} % For [H] table placement
+\usepackage{corl_2026} % Use this for the initial submission.
+\usepackage{booktabs} % For \toprule, \midrule, \bottomrule
+\usepackage{graphicx} % For \includegraphics
+\usepackage{amsmath} % For equations
+\usepackage{amssymb} % For \mathbb
 \usepackage{soul}
 \usepackage{makecell}
-\usepackage{multirow}
+\usepackage{multirow} % For multirow cells in tables
 \usepackage{wrapfig}
 
-\newcommand{\todo}[1]{\textcolor{red}{TODO: #1}}
-
-\definecolor{highlightblue}{RGB}{165,216,255}
-\definecolor{highlightgreen}{RGB}{178,242,187}
-\definecolor{bestcell}{RGB}{255,242,204}
-\definecolor{secondcell}{RGB}{226,239,218}
-
+\definecolor{highlightblue}{RGB}{165, 216, 255}
+\definecolor{highlightgreen}{RGB}{178, 242, 187}
 \DeclareRobustCommand{\hlblue}[1]{{\sethlcolor{highlightblue}\hl{#1}}}
 \DeclareRobustCommand{\hlgreen}[1]{{\sethlcolor{highlightgreen}\hl{#1}}}
-
-\newcommand{\best}[1]{\cellcolor{bestcell}\textbf{#1}}
-\newcommand{\second}[1]{\cellcolor{secondcell}#1}
 
 % \usepackage[final]{corl_2026} % Uncomment for the camera-ready ``final'' version.
 % \usepackage[preprint]{corl_2026} % Uncomment for pre-prints (e.g., arxiv); This is like ``final'', but will remove the CORL footnote.
@@ -92,7 +81,8 @@
 \vspace{-.3cm}
 
 \begin{abstract}
-Vision-language-action (VLA) models have made rapid progress in generalist robot manipulation by harnessing semantic knowledge from pretrained vision-language backbones, but their visual tokens remain grounded in 2D image coordinates rather than the calibrated geometry of the robot's cameras --- a mismatch especially pronounced in multi-camera setups, where views are coupled by known intrinsics and extrinsics yet processed as independent images. We propose \textbf{G$^3$VLA}, a camera-aware geometric module that injects calibrated structure into the visual-token stream of a pretrained VLA without altering its action space or imitation objective, combining intrinsic-conditioned ray embeddings, projective positional encoding (PRoPE), and bidirectional cross-view fusion. Geometric supervision is provided either from ground-truth point maps when available, or from confidence-gated $\pi^3$X teacher predictions, requiring no depth sensors or manual annotations. Instantiated on $\pi_0$, G$^3$VLA yields consistent gains across the LIBERO suites, RoboCasa24, RoboTwin2.0, and real-robot settings, with the largest improvements on spatially and object-sensitive tasks. We further validate on $\pi_{0.5}$ and GR00T~1.5, with results suggesting that geometric transfer is most effective when geometry-aware tokens have direct access to the action generation pathway. Our project page is at \href{https://sites.google.com/view/g3vla}{\texttt{https://sites.google.com/view/g3vla}}.
+Vision-language-action (VLA) models have made rapid progress in generalist robot manipulation by harnessing semantic knowledge from pretrained vision-language backbones, but their visual tokens remain grounded in 2D image coordinates rather than the calibrated geometry of the robot's cameras --- a mismatch especially pronounced in multi-camera setups, where views are coupled by known intrinsics and extrinsics yet processed as independent images. We propose \textbf{G$^3$VLA}, a camera-aware geometric module that injects calibrated structure into the visual-token stream of a pretrained VLA without altering its action space or imitation objective, combining intrinsic-conditioned ray embeddings, projective positional encoding (PRoPE), and bidirectional cross-view fusion. Geometric supervision is provided either from ground-truth point maps when available, or from confidence-gated $\pi^3$X teacher predictions, requiring no depth sensors or manual annotations. Instantiated on $\pi_0$, G$^3$VLA yields consistent gains across the LIBERO suites, RoboCasa24, RoboTwin2.0, and real-robot settings, with the largest improvements on spatially and object-sensitive tasks. We further test the interface on $\pi_{0.5}$ and GR00T~1.5: gains on $\pi_{0.5}$ confirm compatibility with a stronger backbone, while mixed results on GR00T~1.5 suggest that geometric transfer is most effective when geometry-aware tokens have direct access to the action-generation pathway. Our project page is at \href{https://sites.google.com/view/g3vla}{\texttt{https://sites.google.com/view/g3vla}}.
+
 \end{abstract}
 
 
@@ -125,7 +115,9 @@ but rely on task-specific architectures that cannot leverage pretrained VLM
 semantics. Recent bridging efforts such as SpatialVLA~\citep{qu2025spatialvla} 
 and 3D-VLA~\citep{zhen2024threedvla} begin to close this gap, but require 
 explicit 3D sensor inputs, large-scale spatial pretraining, or modifications to 
-the action representation. The key question remains: \textit{Can calibrated camera geometry serve as a lightweight visual-token pathway for pretrained VLAs, improving spatial generalization without modifying the backbone, action space, or imitation objective?}
+the action representation. The key question remains: \textit{can calibrated 
+camera geometry be injected into a pretrained VLA as a lightweight, 
+model-agnostic framework, without altering the backbone or action space?}
 
 We answer this affirmatively with \textbf{G$^3$VLA}, a camera-aware geometric 
 framework that injects calibrated structure directly into the visual-token 
@@ -159,19 +151,17 @@ evidence that the benefit of geometric injection depends on how directly
 geometry-aware tokens participate in action generation, though a more 
 controlled study is needed to isolate the architectural factor.
 
-
 Our contributions are as follows: \textbf{(1) A geometric gap in VLAs:} We identify the mismatch between 2D-grounded visual tokens in pretrained VLAs and the calibrated spatial 
-structure required for precise manipulation. \textbf{(2) G$^3$VLA:} A lightweight, backbone-preserving visual-token pathway that injects calibrated camera geometry into pretrained VLA policies via ray embeddings, PRoPE, and cross-view fusion, without modifying the action space or imitation objective. \textbf{(3) Geometry distillation from $\pi^3$X:} A two-stage procedure supervising geometric modules with confidence-gated dense point maps from a visual geometry teacher, requiring no manual 3D annotations. \textbf{(4) Multi-architecture validation:} Consistent gains on $\pi_0$ and $\pi_{0.5}$, together with an architectural analysis on GR00T~1.5 whose mixed results suggest that the benefit of geometric injection depends on how directly geometry-aware tokens reach the action pathway.
-
-
-%Our contributions are as follows: \textbf{(1) A geometric gap in VLAs:} We identify the mismatch between 2D-grounded visual tokens in pretrained VLAs and the calibrated spatial structure required for precise manipulation. \textbf{(2) G$^3$VLA:}A lightweight, backbone-preserving visual-token pathway that injects calibrated camera geometry into pretrained VLA policies via ray embeddings, PRoPE, and cross-view fusion, without modifying the action space or imitation objective. \textbf{(3) Geometry distillation from $\pi^3$X:} A two-stage procedure supervising geometric modules with confidence-gated dense point maps from a visual geometry teacher, requiring no manual 3D annotations. \textbf{(4) Multi-architecture validation:} Consistent gains on $\pi_0$ and $\pi_{0.5}$, and an architectural study on GR00T~1.5 showing that direct visual-token access is key to geometric transfer.
+structure required for precise manipulation. \textbf{(2) G$^3$VLA:} A lightweight, model-agnostic framework that injects calibrated camera geometry into pretrained VLA policies via ray embeddings, PRoPE, and cross-view fusion, without modifying the backbone or action space. \textbf{(3) Geometry distillation from $\pi^3$X:} A two-stage procedure supervising geometric modules with confidence-gated dense point maps from a visual geometry teacher, requiring no manual 3D annotations. \textbf{(4) Multi-architecture validation:} Consistent gains on $\pi_0$ and $\pi_{0.5}$, together with an architectural analysis on GR00T~1.5 whose mixed results suggest that the benefit of geometric injection depends on how directly geometry-aware tokens reach the action pathway.
 
 % \begin{itemize}
 % \item \textbf{A geometric gap in VLAs.} We identify the mismatch between 
 % 2D-grounded visual tokens in pretrained VLAs and the calibrated spatial 
 % structure required for precise manipulation.
 
-% \item \textbf{G$^3$VLA.} A lightweight, backbone-preserving visual-token pathway that injects calibrated camera geometry into pretrained VLA policies via ray embeddings, PRoPE, and cross-view fusion, without modifying the action space or imitation objective.
+% \item \textbf{G$^3$VLA.} A lightweight, model-agnostic framework that injects 
+% calibrated camera geometry into pretrained VLA policies via ray embeddings, 
+% PRoPE, and cross-view fusion, without modifying the backbone or action space.
 
 % \item \textbf{Geometry distillation from $\pi^3$X.} A two-stage procedure 
 % supervising geometric modules with confidence-gated dense point maps from a 
@@ -184,18 +174,17 @@ structure required for precise manipulation. \textbf{(2) G$^3$VLA:} A lightweigh
  
 
 \section{Related Work}
-
 \textbf{Vision-language-action models.}
-VLA models reframe language-conditioned manipulation as sequence modeling over images, text, and actions. RT-1 and RT-2 showed that transformer policies with Internet-scale vision-language pretraining transfer semantic knowledge to robot control~\citep{brohan2023rt1,zitkovich2023rt2}, and OpenVLA, $\pi_0$, and $\pi_{0.5}$ make this practical via open checkpoints, continuous-action flow matching, and co-trained open-world generalization~\citep{kim2024openvla,black2025pi0,black2025pi05}. These models nonetheless inherit largely 2D visual interfaces, learning camera geometry only indirectly from action supervision. Rather than scaling pretraining or altering the action decoder, we preserve the policy interface and expose calibrated camera structure to the visual tokens that drive the action model.
+Vision-language-action (VLA) models have reframed language-conditioned manipulation as sequence modeling over images, text, and robot actions. RT-1 and RT-2 showed that transformer policies and Internet-scale vision-language pretraining can transfer semantic knowledge to robot control~\citep{brohan2023rt1,zitkovich2023rt2}. OpenVLA and $\pi_0$ further make this paradigm practical through open VLA checkpoints and continuous-action flow matching~\citep{kim2024openvla,black2025pi0}. Despite strong semantic priors, these models still inherit largely 2D visual interfaces, where camera geometry is learned only indirectly from action supervision. Rather than scaling VLA pretraining or modifying the action decoder, we preserve the pretrained policy interface and investigate how calibrated camera structure can be exposed to the visual tokens used by the action model.
 
 \textbf{Structured 3D representations for manipulation.}
-Many policies improve spatial precision through explicit 3D scene representations: PerAct uses voxelized RGB-D observations~\citep{shridhar2023peract}, RVT aggregates rendered multi-view features~\citep{goyal2023rvt}, Act3D lifts 2D features into a 3D feature field~\citep{gervet2023act3d}, PolarNet operates on point clouds~\citep{chen2023polarnet}, and 3D Diffuser Actor pairs 3D scene representations with action diffusion for stronger cross-viewpoint generalization~\citep{ke2024diffuseractor}. These approaches confirm the value of geometric structure---especially for precise end-effector placement---but modify the policy interface with voxels or point clouds; we instead keep an RGB-based VLA and introduce calibration as a token-level inductive bias rather than an explicit scene representation.
+Many manipulation policies improve spatial precision through explicit 3D scene representations. PerAct uses voxelized RGB-D observations~\citep{shridhar2023peract}, RVT aggregates rendered multi-view features~\citep{goyal2023rvt}, Act3D lifts 2D features into a 3D feature field~\citep{gervet2023act3d}, and PolarNet operates directly on point clouds~\citep{chen2023polarnet}. It demonstrates geometric structure benefits manipulation, especially for precise end-effector placement. However, they typically modify the policy interface with voxels or point clouds. In contrast, we preserve an RGB-based VLA policy and introduce calibration as a token-level inductive bias rather than an explicit scene representation.
 
 \textbf{Spatially aware VLAs.}
-Other work connects VLA policies more directly to spatial representations: 3D-VLA couples action prediction with 3D world modeling~\citep{zhen2024threedvla}, SpatialVLM studies metric spatial reasoning in VLMs~\citep{chen2024spatialvlm}, SpatialVLA introduces egocentric 3D encodings with adaptive action grids for cross-robot transfer~\citep{qu2025spatialvla}, and 3DS-VLA builds a spatially aware VLA around 3D representations~\citep{li2025threedsvla}. Unlike these, which alter the policy state or action space, we inject calibrated multi-camera geometry directly into the visual-token stream of a pretrained VLA.
+Recent work has begun to connect VLA policies more directly with spatial representations. 3D-VLA couples action prediction with 3D world modeling~\citep{zhen2024threedvla}. SpatialVLM studies metric spatial reasoning in vision-language models~\citep{chen2024spatialvlm}, and SpatialVLA introduces egocentric 3D encodings with adaptive action grids for cross-robot transfer~\citep{qu2025spatialvla}. 3DS-VLA builds a spatially aware VLA around 3D representations for robust multi-task manipulation~\citep{li2025threedsvla}. These methods suggest that structured spatial representations improve generalist robot policies. In contrast, we avoid altering the policy state or action space and instead inject calibrated multi-camera geometry directly into the visual-token stream of a pretrained VLA.
 
 \textbf{Camera-aware representations and geometry distillation.}
-Multi-camera platforms often provide calibrated intrinsics and extrinsics, yet policies typically process each stream as an ordinary image. Camera-aware positional encodings expose this structure to attention: Cameras as Relative Positional Encoding introduces PRoPE, a projective signal that captures cross-view relations through the camera model rather than learned appearance alone~\citep{li2025cameras}. Complementarily, feed-forward visual-geometry models such as DUSt3R, VGGT, and $\pi^3$ predict dense point maps directly from RGB~\citep{wang2024dust3r,wang2025vggt,wang2025pi3}, supplying geometric targets without depth sensors. We bring both to VLA: token-level ray embeddings and attention-level projective geometry fuse views before the action module, supervised by distilled $\pi^3$X point maps tied to robot control.
+Multi-camera robot platforms often provide calibrated intrinsics and extrinsics, yet policies frequently process each camera stream as an ordinary image. Camera-aware positional encodings offer a direct way to expose this structure to attention layers. Cameras as Relative Positional Encoding studies several forms of camera conditioning and introduces PRoPE, a projective positional signal that represents cross-view relations through the camera model rather than only through learned appearance statistics~\citep{li2025cameras}. We adapt this idea to VLA, where the calibrated cameras are tied to robot control and action prediction. Our interface combines token-level ray embeddings from intrinsics with attention-level projective geometry from intrinsics and extrinsics, then fuses views before the policy's action module.
 
 % Learning such geometry-aware tokens also requires supervision. Dense metric labels can be obtained from depth sensors or reconstruction pipelines, but this would make the method less applicable to RGB-only robot datasets. We instead distill full-resolution ray-coordinate and log-depth targets from a visual geometry teacher based on $\pi^3$, which learns permutation-equivariant visual geometry from images~\citep{wang2025pi3}. The teacher supplies dense auxiliary targets for training the visual pathway, while the deployed policy uses only RGB observations, proprioception, language, and camera calibration. This separates geometric supervision from the test-time policy interface.
 
@@ -313,6 +302,7 @@ by a convolutional upsampler, yielding per-pixel predictions
 $\hat{q}_u^v\!\in\!\mathbb{R}^2$ (ray coordinate) and
 $\hat{d}_u^v\!\in\!\mathbb{R}$ (log-$z$ depth). \textit{The head is discarded at
 inference.}
+
 Supervision targets $q_u^v$ and $d_u^v$ come from one of two sources.  When
 ground-truth depth is available---e.g.\ in simulation---we set the validity
 mask $m_u^v=1$ everywhere.  Otherwise, we use
@@ -338,13 +328,16 @@ with $\tau=0.1$.  The distillation loss is unified across both modes:
 %---------------------------------------------------------------------
 
 \textbf{Two-Stage Training Curriculum.}
-We combine the action and distillation losses:
+The full training objective combines the action and distillation losses:
 \begin{equation}
     \mathcal{L}
     = \lambda_{\mathrm{act}}\,\mathcal{L}_{\mathrm{act}}
     + \lambda_{\mathrm{distill}}\,\mathcal{L}_{\mathrm{distill}},
 \end{equation}
-where $\mathcal{L}_{\mathrm{act}}$ is the base VLA's action objective, left unchanged---in our $\pi_0$ instantiation, the original flow-matching loss. As illustrated in Fig.~\ref{fig:architecture}(B), we optimize this in two stages (hyperparameters in Appendix~\ref{app:training_details}).
+where $\mathcal{L}_{\mathrm{act}}$ is the action objective of the base VLA, left
+unchanged---in our $\pi_0$ instantiation, the original flow-matching loss. As
+illustrated in Fig.~\ref{fig:architecture}(B), we optimize this objective in two
+stages (hyperparameters in Appendix~\ref{app:training_details}).
 %
 \textbf{Stage~1: Geometric Module Pre-training.}
 We update only the ray embeddings, cross-view fusion layers, and auxiliary point
@@ -372,38 +365,31 @@ auxiliary head is queried.
 \section{Experiments}
 \label{sec:results}
 
-
-We evaluate whether calibrated camera geometry provides a useful inductive bias for pretrained vision-language-action policies, addressing three questions: (1)~Does the camera-aware geometric module improve manipulation on standard simulated VLA benchmarks? (2)~Do the gains generalize beyond LIBERO-style tabletop scenes to more diverse household environments? (3)~Which geometric components and supervision sources matter most? We report main simulation results on LIBERO, RoboCasa24, and RoboTwin2.0, then LIBERO ablations, and finally real-robot results.
-
-
-
+We evaluate whether calibrated camera geometry provides a useful inductive bias for pretrained vision-language-action policies. Our experiments address three questions. (1) Does the proposed camera-aware geometric module improve manipulation performance on standard simulated VLA benchmarks? (2) Do these improvements generalize beyond LIBERO-style tabletop scenes to more diverse household environments? (3) Which geometric components and supervision sources contribute most to the observed gains? We first present the main simulation results on LIBERO, RoboCasa24, and RoboTwin2.0, followed by ablation studies on LIBERO, and real-robot results.
 \subsection{Experimental Setup}
 \label{sec:exp_setup}
 
-Across backbones, geometry-module implementation, camera-geometry preprocessing, and teacher-target generation are shared (Appendices~\ref{app:implementation}--\ref{app:pointmap_supervision}); only the training hyperparameters are backbone-specific (Appendix~\ref{app:training_details}). The complete evaluation protocols are given in the Appendix~\ref{app:evaluation_details}.
-
-
 \textbf{Simulation benchmarks.}
-We evaluate G$^3$VLA in \textbf{three} simulation settings. LIBERO~\citep{liu2023libero} is used as the primary benchmark because its four suites (LIBERO-Goal, LIBERO-Spatial, LIBERO-Object, and LIBERO-10) test complementary forms of generalization: goal variation, spatial relations, object variation, and long-horizon task composition. We further include RoboCasa24~\citep{nasiriany2024robocasa}, a broader household manipulation benchmark with more diverse kitchen layouts, object configurations, and task families, and the RoboTwin2.0~\citep{chen2025robotwin} \texttt{handover\_block} task, a targeted diagnostic for bimanual manipulation with more than two camera views. We report task success rate as the primary metric. \looseness=-1
-
-
+We evaluate G$^3$VLA on \textbf{three} simulation settings. LIBERO is used as the primary benchmark because its four suites test (LIBERO-Goal, LIBERO-Spatial, LIBERO-Object, and LIBERO-10) complementary forms of generalization: goal variation, spatial relations, object variation, and long-horizon task composition. RoboCasa24 is used as a broader household manipulation benchmark with more diverse kitchen layouts, object configurations, and task families. Finally, we include the RoboTwin2.0 \texttt{handover\_block} task as a targeted diagnostic for bimanual manipulation with more than two camera views. We report task success rate as the primary metric.
 % \textbf{Evaluation metric in simulation.}
 % We report task success rate as the primary metric. A rollout is successful only when the benchmark-provided success condition is satisfied. For LIBERO, we report success rate on each suite and the macro average across the four suites. For RoboCasa24, we report success rates by task family and the total average across all trials. For RoboTwin2.0, we report the success rate on the evaluated task. 
 
 \textbf{Base policies and variants.}
-We evaluate G$^3$VLA across three backbones: $\pi_0$, $\pi_{0.5}$, and GR00T~1.5. $\pi_0$ is the main backbone and is evaluated on LIBERO, RoboCasa24, and RoboTwin2.0 with the original action space, policy interface, and flow-matching objective unchanged. $\pi_{0.5}$ is evaluated on LIBERO as a stronger near-saturation baseline. GR00T~1.5 is evaluated on LIBERO to assess how architectural differences affect geometric inductive bias. For supervision, we consider two supervision regimes: G$^3$VLA~(GT), which uses ground-truth point-map supervision in simulation, and G$^3$VLA~($\pi^3$X), which uses confidence-gated teacher predictions when only camera intrinsics and extrinsics are available. We further report LIBERO ablations on $\pi_0$: \textit{w/o Ray} (removes intrinsic-conditioned ray embeddings), \textit{w/o PRoPE} (removes projective positional encoding), and \textit{1-Stage} (removes the staged training curriculum).
+We evaluate G$^3$VLA across three backbones: $\pi_0$, $\pi_{0.5}$, and GR00T~1.5. $\pi_0$ is the main backbone and is evaluated on LIBERO, RoboCasa24, and RoboTwin2.0 with the original action space, policy interface, and flow-matching objective unchanged. $\pi_{0.5}$ is evaluated on LIBERO as a stronger near-saturation baseline. GR00T~1.5 is evaluated on LIBERO to assess how architectural differences affect geometric inductive bias.
+% NOTE: the setup previously claimed GR00T was also evaluated on RoboCasa24, but no such result is reported anywhere. If you have GR00T RoboCasa24 numbers, add the table and restore "and RoboCasa24" above; otherwise keep this LIBERO-only.
+For supervision, we consider two supervision regimes: G$^3$VLA~(GT), which uses ground-truth point-map supervision in simulation, and G$^3$VLA~($\pi^3$X), which uses confidence-gated teacher predictions when only camera intrinsics and extrinsics are available. We further report LIBERO ablations on $\pi_0$: \textit{w/o Ray} (removes intrinsic-conditioned ray embeddings), \textit{w/o PRoPE} (removes projective positional encoding), and \textit{1-Stage} (removes the staged training curriculum).
 
 \begin{figure}[h!]
     \centering
     \includegraphics[width=.8\linewidth]{imgs/npbc_nyu_paper_2.png}
     % \caption{Real-World experiments setup on bi-manual ur5 robotic arm bench. Two tasks are used for evaluation: \hlblue{\textbf{Pick and Place Test Tube} (marked with blue) with prompt: \textit{Pick the black and white container, place it on top of the black and red container, then pick the blue container with nuts and metal plate inside and pour the nuts and metal plate inside the black and red container until the blue container is empty}"}, and \hlgreen{\textbf{Pouring Nut} (marked with green) with prompt: \textit{"place the lab test tube with red contents and place it in the smaller lab test tube holder"}.} Dataset distribution is presented in the table defined by the relevant object positions for a given task. Each combination of positions is repeated 10 times with a different context camera position.}
-    \caption{Real-World experimental setup on bimanual UR5 robotic arm bench. Two tasks are used for evaluation: \hlblue{\textbf{Pick and Place Test Tube} (in blue)}, and \hlgreen{\textbf{Pouring Nut} (in green)}. Dataset distribution is presented in the table defined by the relevant object positions for a given task. Each combination of positions is repeated 10 times with a different context camera position.}
+    \caption{Real-World experiments setup on bi-manual ur5 robotic arm bench. Two tasks are used for evaluation: \hlblue{\textbf{Pick and Place Test Tube} (marked with blue)}, and \hlgreen{\textbf{Pouring Nut} (marked with green)}. Dataset distribution is presented in the table defined by the relevant object positions for a given task. Each combination of positions is repeated 10 times with a different context camera position.}
     \label{fig:real-robo}
     \vspace{-.3cm}
 \end{figure}
 
-\textbf{Real-World Benchmarks.}
-We evaluate on two tasks using a bimanual Universal Robots UR5 workbench, where one arm performs manipulation and the other holds a context camera that varies across 10 recorded positions. The two tasks are: \textit{Pick-and-Place Test Tube} requires transporting a lab test tube between holders across four source-target configurations; and \textit{Pouring Nut}, a long-horizon two-stage task requiring stacking a container then pouring contents into it. See Appendix~\ref{app:real_world_protocol} for detailed description of the task and the evaluation protocol. Each dataset contains 120 episodes collected on a $10{\times}10$\,cm workspace grid, which allows accurate replication of in-distribution object positions. This allows us to test the \textbf{only} variable of interest: camera position shifts. Camera intrinsics are captured once at initialization; extrinsics are computed per frame from forward kinematics. Training uses 10 camera viewpoints (1–10). Evaluation reports in-distribution results on views 1 and 3, and out-of-distribution generalization on unseen views 11, 12, and 13, which are excluded from training.
+\textbf{Real-World Benchmarks}
+We evaluate on two tasks using a bimanual Universal Robots UR5 workbench, where one arm performs manipulation and the other holds a context camera that varies across 10 recorded positions. The two tasks are: \textit{Pick-and-Place Test Tube} requires transporting a lab test tube between holders across four source-target configurations; and \textit{Pouring Nut}, a long-horizon two-stage task requiring stacking a container then pouring contents into it. See Appendix~\ref{app:evaluation_protocol} for detailed description of the task and the evaluation protocol. Each datasets contain 120 episodes collected on a $10{\times}10$\,cm workspace grid, which allow for accurate replication of in-distribution object positions. This allows us for testing the \textbf{only} variable of interest: camera position shifts. Camera intrinsics are captured once at initialization; extrinsics are computed per frame from forward kinematics. Training uses 10 camera viewpoints (1–10). Evaluation reports in-distribution results on views 1 and 3, and out-of-distribution generalization on unseen views 11, 12, and 13, which are excluded from training.
 % Both tasks use standardized LeRobot v2.1-style logs including images, actions, and joint states, along with per-frame extrinsics. Two prompt variants are used: a full instruction for Pi0.5 and a shortened version for Pi0 due to token limits.
 
 % \textbf{In-Distribution and Out-of-Distribution Camera Views.}
@@ -423,12 +409,12 @@ We evaluate on two tasks using a bimanual Universal Robots UR5 workbench, where 
     \toprule
     Suite & $\pi_0$ Baseline & \makecell{G$^3$VLA \\ ($\pi^3$X)} & \makecell{G$^3$VLA \\ (GT)} & Gain \\
     \midrule
-    Goal    & 87.4 & 88.4 & \best{88.4} & +1.0 \\
-    Spatial & 85.2 & 88.6 & \best{89.2} & +4.0 \\
-    Object  & 89.4 & 93.4 & \best{94.4} & +5.0 \\
-    L-10      & 76.5 & 77.6 & \best{80.4} & +3.9 \\
+    Spatial & 85.2 & 88.6 & \textbf{89.2} & +4.0 \\
+    Object  & 89.4 & 93.4 & \textbf{94.4} & +5.0 \\
+    Goal    & 87.4 & \textbf{88.4} & \textbf{88.4} & +1.0 \\
+    L-10    & 76.5 & 77.6 & \textbf{80.4} & +3.9 \\
     \midrule
-    Average & 84.6 & 87.0 & \best{88.1} & +3.5 \\
+    Average & 84.6 & 87.0 & \textbf{88.1} & +3.5 \\
     \bottomrule
     \end{tabular}
     \caption{LIBERO results on $\pi_0$ (\%). Gain denotes absolute improvement of G$^3$VLA~(GT) over baseline.}
@@ -445,12 +431,12 @@ We evaluate on two tasks using a bimanual Universal Robots UR5 workbench, where 
     \multirow{3}{*}{RoboCasa24}
         & $\pi_0$ Baseline            & 34.2 \\
         & G$^3$VLA ($\pi^3$X) & 36.5 \\
-        & G$^3$VLA (GT)       & \best{37.1} \\
+        & G$^3$VLA (GT)       & \textbf{37.1} \\
     \midrule
     \multirow{3}{*}{RoboTwin2.0}
         & $\pi_0$ Baseline            & 44.0 \\
         & G$^3$VLA ($\pi^3$X) & 41.0 \\
-        & G$^3$VLA (GT)       & \best{49.0} \\
+        & G$^3$VLA (GT)       & \textbf{49.0} \\
     \bottomrule
     \end{tabular}
     \caption{Broader results on $\pi_0$ (\%). RoboCasa24: total avg.; RoboTwin2.0: \texttt{handover\_block}.}
@@ -471,13 +457,20 @@ the average success rate to 87.0\%, showing that teacher-predicted geometry
 remains useful when ground-truth supervision is unavailable.
 
 
-\textbf{RoboCasa24 and RoboTwin2.0.}
-Table~\ref{tab:broader} reports results on the two broader benchmarks.
-On RoboCasa24, G$^3$VLA (GT) improves the total average from 34.2\% to 37.1\%, while G$^3$VLA ($\pi^3$X) reaches 36.5\%, with gains uneven across task families (see Table~\ref{tab:appendix_robocasa_breakdown}).
-RoboTwin2.0 exposes a teacher-supervision failure case: G$^3$VLA (GT) improves the handover-block task from 44.0\% to 49.0\%, whereas G$^3$VLA ($\pi^3$X) drops to 41.0\%.
-We attribute this gap to unreliable offline $\pi^3$X point-map targets in visually clean synthetic scenes; simulator ground-truth point maps remove this bottleneck (detailed in Appendix~\ref{app:robotwin_teacher_failure}).
-Thus, calibrated geometry remains beneficial when the supervision signal is reliable, while teacher-distilled geometry is sensitive to domain mismatch.
 
+\textbf{RoboCasa24 and RoboTwin2.0.} Table~\ref{tab:broader} reports results on
+the two broader benchmarks. On RoboCasa24, G$^3$VLA~(GT) improves the total
+average from 34.2\% to 37.1\%, with the largest absolute gain in Pick \& Place (+5.0 points; see Table~\ref{tab:appendix_robocasa_breakdown}). G$^3$VLA~($\pi^3$X) also improves the total average to 36.5\%,
+though gains are uneven across task families, suggesting that teacher-predicted
+geometry is more reliable for some manipulation categories than others. On
+RoboTwin2.0, G$^3$VLA~(GT) improves the handover block task from 44.0\% to
+49.0\%, while G$^3$VLA~($\pi^3$X) falls slightly below the baseline at 41.0\%.
+These results show that calibrated camera geometry transfers
+beyond LIBERO, with ground-truth supervision providing the most consistent
+improvement across benchmarks. We note that RoboTwin2.0 here is a single
+diagnostic task, so the $\pi^3$X regression should be read as a cautionary data
+point rather than a general trend; characterizing when teacher-predicted
+geometry helps versus hurts is an important direction for future work.
 
 \subsection{Generalization Across Backbones}
 
@@ -491,57 +484,52 @@ saturation on LIBERO. We view this as confirmation that the camera-aware
 interface remains compatible with a stronger base policy and can still provide a
 small additional gain.
 
-\begin{table*}[t]
-\vspace{-0.5cm}
+\begin{table}[t]
+\vspace{-1cm}
 \centering
-
-\begin{minipage}[t]{0.48\textwidth}
-    \vspace{0pt}
+\begin{minipage}{0.48\textwidth}
     \centering
     \small
-    \setlength{\tabcolsep}{3pt}
     \begin{tabular}{lccc}
     \toprule
-    Suite 
-    & \makecell{\textcolor{gray}{$\pi_{0.5}$} \\ \textcolor{gray}{Official}} 
-    & \makecell{$\pi_{0.5}$ \\ Reprod.} 
-    & \makecell{G$^3$VLA \\ ($\pi^3$X)} \\
+    Suite & \makecell{Official \\ $\pi_{0.5}$} & \makecell{Reproduced \\ $\pi_{0.5}$} & \makecell{G$^3$VLA \\ $\pi_{0.5}$} \\
     \midrule
-    Spatial  & \textcolor{gray}{98.0} & \best{98.8} & 98.2          \\
-    Object   & \textcolor{gray}{99.0} & 98.4          & \best{99.0} \\
-    Goal     & \textcolor{gray}{98.2} & 94.4          & \best{98.0} \\
-    L-10     & \textcolor{gray}{91.4} & 91.8          & \best{92.8} \\
+    Spatial  & 98.0          & \textbf{98.8} & 98.2          \\
+    Object   & \textbf{99.0} & 98.4          & \textbf{99.0} \\
+    Goal     & \textbf{98.2} & 94.4          & 98.0          \\
+    L-10     & 91.4          & 91.8          & \textbf{92.8} \\
     \midrule
-    Avg.     & \textcolor{gray}{96.7} & 95.9          & \best{97.0} \\
+    Avg.     & 96.65         & 95.85         & \textbf{97.0} \\
     \bottomrule
     \end{tabular}
-    \caption{LIBERO validation on $\pi_{0.5}$ (\%). Official results are shown as external reference only; comparisons are made against reproduced $\pi_{0.5}$ baseline.}
+    \caption{LIBERO validation on $\pi_{0.5}$ (\%). 
+    % G$^3$VLA averaged over two runs. 
+    Comparisons against reproduced baseline; official included as reference.}
     \label{tab:pi05}
-\end{minipage}%
-\hfill%
-\begin{minipage}[t]{0.48\textwidth}
-    \vspace{0pt}
+\end{minipage}
+\hfill
+\begin{minipage}{0.48\textwidth}
     \centering
     \small
-    \setlength{\tabcolsep}{3pt}
     \begin{tabular}{lccc}
     \toprule
-    Suite & \makecell{GR00T~1.5 \\ Baseline} & \makecell{G$^3$VLA \\ (GT)} & \makecell{G$^3$VLA \\ ($\pi^3$X)} \\
+    Suite & Baseline & \makecell{G$^3$VLA \\ (GT)} & \makecell{G$^3$VLA \\ ($\pi^3$X)} \\
     \midrule
-    Spatial  & \best{96.6} & 94.2          & \best{96.6} \\
-    Object   & 97.0          & 97.0          & \best{99.0} \\
-    Goal     & 95.4          & 94.2          & \best{95.8} \\
-    L-10     & \best{90.6} & \best{92.6} & 89.6          \\
+    Spatial  & \textbf{96.6} & 94.2          & \textbf{96.6} \\
+    Object   & 97.0          & 97.0          & \textbf{99.0} \\
+    Goal     & 95.4          & 94.2          & \textbf{95.8} \\
+    L-10     & \textbf{90.6} & \textbf{92.6} & 89.6          \\
     \midrule
-    Avg.     & 94.90         & 94.50         & \best{95.25}\\
+    Avg.     & 94.90         & 94.50         & \textbf{95.25}\\
     \bottomrule
     \end{tabular}
-   \caption{LIBERO validation on GR00T~1.5 (\%). G$^3$VLA~(GT) does not improve on average, while G$^3$VLA~($\pi^3$X) gives a small gain.}
+    \caption{LIBERO validation on GR00T~1.5 (\%). G$^3$VLA~(GT) does not improve over the baseline on average (94.50 vs.\ 94.90), while G$^3$VLA~($\pi^3$X) gives a small gain; scores are near saturation, so differences should be read cautiously.}
     \label{tab:groot}
 \end{minipage}
+\vspace{-.5cm}
+\end{table}
 
-\vspace{-0.3cm}
-\end{table*}
+\textbf{Architectural generalization (GR00T~1.5).}
 
 \begin{wrapfigure}{r}{0.5\textwidth}
     \vspace{-0.5cm}
@@ -552,11 +540,22 @@ small additional gain.
     \label{fig:ablation}
 \end{wrapfigure}
 
-\textbf{Architectural generalization (GR00T~1.5).}
-On GR00T~1.5's two-tower architecture, where the diffusion policy reaches visual features via cross-attention to a frozen VLM rather than consuming tokens directly, the effect is asymmetric (Table~\ref{tab:groot}):
-G$^3$VLA~($\pi^3$X) improves the macro average from 94.90\% to 95.25\%, while G$^3$VLA~(GT) does not (94.50\%). We attribute this to the indirect pathway---geometric tokens must cross an extra attention bottleneck before reaching action generation, attenuating the signal---suggesting that the benefit of calibrated geometry depends on how directly geometry-aware tokens participate in action prediction. Tighter integration is left to future work.
-
-
+Table~\ref{tab:groot} evaluates G$^3$VLA on GR00T~1.5, which uses a
+fundamentally different two-tower architecture: the diffusion policy accesses
+visual features through cross-attention to a frozen VLM tower rather than
+consuming visual tokens directly. G$^3$VLA~($\pi^3$X) improves the macro
+average from 94.90\% to 95.25\%, but G$^3$VLA~(GT) does not improve over
+the baseline (94.50\% vs.\ 94.90\%). A plausible explanation is the
+indirect geometric pathway in GR00T's architecture: geometric tokens injected
+at the VLM level must propagate through an additional cross-attention bottleneck
+before influencing action generation, attenuating the geometric signal. Because
+these LIBERO scores are near saturation and the differences are small, and
+because the two-tower design differs from $\pi_0$ in more ways than token
+routing alone, we treat this as a hypothesis rather than a conclusive result: it
+suggests that the benefit of calibrated camera geometry may depend on how
+directly geometry-aware tokens participate in action generation, and points to a
+controlled architectural study and tighter integration as directions for future
+work.
 \subsection{Ablation Studies}
 \label{sec:ablation_studies}
 
@@ -566,8 +565,8 @@ summarized in Figure~\ref{fig:ablation}.
 \textbf{Geometric components.} Removing ray embeddings reduces average success
 from 87.0\% to 85.0\% ($\Delta$\,=\,$-$2.0), the largest single-component drop.
 Removing PRoPE reduces it to 85.9\% ($\Delta$\,=\,$-$1.1). Both ablations fall
-well below the full G$^3$VLA~($\pi^3$X) recipe, confirming that the ray embeddings
-and the projective cross-view structure are complementary: the ray embeddings encode
+well below the full G$^3$VLA~($\pi^3$X) recipe, confirming that ray embeddings
+and projective cross-view structure are complementary: ray embeddings encode
 per-patch viewing directions from $K^{-1}$, while PRoPE relates tokens across
 calibrated views.
 
@@ -584,9 +583,9 @@ of the gain over baseline (+2.4 points), making it a practical alternative when
 ground-truth depth is unavailable.
 
 \subsection{Main Real-world Results}
-Table~\ref{tab:real_robot_res} shows that G$^3$VLA provides the largest gains in OOD settings, where calibrated geometry becomes most important. On the pouring task, incorporating geometric priors consistently improves OOD performance across checkpoints, increasing $\pi_0$ from 70.8--75.0 to 83.3--87.5 and improving overall success from 82.5--85.0 to 90.0--92.5. Similar trends appear for $\pi_{0.5}$, where G$^3$VLA improves OOD generalization despite the stronger backbone already approaching saturation on in-distribution views. On the more spatially sensitive test-tube task, improvements are smaller but still consistent in later checkpoints, particularly for $\pi_{0.5}$ where OOD success increases from 25 to 50 at 25K, and 41.7 to 58.3 at 30K. Importantly, these gains are obtained without modifying the action space or introducing explicit 3D representations at inference. Instead, the policy benefits directly from camera-aware token geometry and projective positional structure, suggesting that calibrated multi-view information acts as an effective inductive bias for generalization under viewpoint shift.
+Table~\ref{tab:real_robot_res} shows that G$^3$VLA provides the largest gains in OOD settings, where calibrated geometry becomes most important. On the pouring task, incorporating geometric priors consistently improves OOD performance across checkpoints, increasing $\pi_0$ from 70.8--75.0 to 83.3--87.5 and improving overall success from 82.5--85.0 to 90.0--92.5. Similar trends appear for $\pi_{0.5}$, where G$^3$VLA improves OOD generalization despite the stronger backbone already approaching saturation on in-distribution views. On the more spatially sensitive test-tube task, improvements are smaller but still consistent in later checkpoints, particularly for $\pi_{0.5}$ where OOD success increases from 50.0 to 58.3 at 30K training steps. Importantly, these gains are obtained without modifying the action space or introducing explicit 3D representations at inference time. Instead, the policy benefits directly from camera-aware token geometry and projective positional structure, suggesting that calibrated multi-view information acts as an effective inductive bias for generalization under viewpoint shift.
 % Task Tube
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \small
 \setlength{\tabcolsep}{4pt}
@@ -611,20 +610,20 @@ Table~\ref{tab:real_robot_res} shows that G$^3$VLA provides the largest gains in
 20K
 & 75.0 & 50.0 & 60.0
 & 75.0 & 33.3 & 50.0
-& 50.0 & \best{41.7} & 45.0
-& \best{62.5} & {33.3} & {45.0} \\
+& 62.5 & 50.0 & 55.0
+& 62.5 & 33.3 & 45.0 \\
 
 25K
 & 62.5 & 41.7 & 50.0
-& \best{75.0} & 41.7 & \best{55.0}
-& 37.5 & 25.0 & 30.0
-& \best{50.0} & \best{50.0} & \best{50.0} \\
+& \textbf{75.0} & 41.7 & \textbf{55.0}
+& 62.5 & 50.0 & 55.0
+& 50.0 & 50.0 & 50.0 \\
 
 30K
 & 75.0 & 58.3 & 65.0
 & 75.0 & 58.3 & 65.0
-& 37.5 & 41.7 & 40.0
-& \best{62.5} & \best{58.3} & \best{60.0} \\
+& 62.5 & 50.0 & 55.0
+& 62.5 & \textbf{58.3} & \textbf{60.0} \\
 \bottomrule
 \end{tabular}
 % \caption{
@@ -636,7 +635,7 @@ Table~\ref{tab:real_robot_res} shows that G$^3$VLA provides the largest gains in
 % \end{table}
 
 
-% \begin{table}[t]
+% \begin{table}[H]
 % \centering
 % \small
 % \setlength{\tabcolsep}{4pt}
@@ -660,25 +659,25 @@ Table~\ref{tab:real_robot_res} shows that G$^3$VLA provides the largest gains in
 \midrule
 20K
 & 100.0 & 70.8 & 82.5
-& 100.0 & \best{83.3} & \best{90.0}
+& 100.0 & \textbf{83.3} & \textbf{90.0}
 & 93.75 & 66.7 & 77.5
-& 93.75 & \best{70.8} & \best{80.0} \\
+& 93.75 & \textbf{70.8} & \textbf{80.0} \\
 
 25K
 & 100.0 & 75.0 & 85.0
-& 100.0 & \best{87.5} & \best{92.5}
+& 100.0 & \textbf{87.5} & \textbf{92.5}
 & 100.0 & 66.7 & 80.0
-& 87.50 & \best{79.2} & \best{82.5} \\
+& 87.50 & \textbf{79.2} & \textbf{82.5} \\
 
-% 30K
-% & 100.0 & 75.0 & 85.0
-% & 100.0 & \textbf{87.5} & \textbf{92.5}
-% & 93.75 & \textbf{79.2} & 85.0
-% & 93.75 & 70.8 & 80.0 \\
+30K
+& 100.0 & 75.0 & 85.0
+& 100.0 & \textbf{87.5} & \textbf{92.5}
+& 93.75 & \textbf{79.2} & 85.0
+& 93.75 & 70.8 & 80.0 \\
 \bottomrule
 \end{tabular}
 \caption{
-Success rates (\%) across model variants \& tasks. See Appendix~\ref{app:qualitative_example} for qualitative examples.}
+Success rates (\%) across manipulation tasks and model variants.}
 \label{tab:real_robot_res}
 \vspace{-.8 cm}
 \end{table}
@@ -691,11 +690,25 @@ Success rates (\%) across model variants \& tasks. See Appendix~\ref{app:qualita
 
 \section{Limitations}
 \label{sec:limitations}
-Our method assumes accurate intrinsics and extrinsics, making it sensitive to calibration drift, synchronization errors, and train--test mismatch, and it relies on a visual geometry teacher whose targets stay imperfect under occlusion, specularities, blur, or weak-prior viewpoints (gating reduces but does not remove this bias). The benefit is also architecture-dependent: on the two-tower GR00T~1.5, where the action model reaches the VLM only through cross-attention rather than consuming geometry-aware tokens, gains are attenuated. Modifying only the visual-token representation keeps the method compatible with pretrained VLAs but leaves failures rooted in the action space, limited demonstrations, or weak language--action grounding unaddressed; teacher caches and auxiliary-head training also add offline cost, though neither is needed at deployment. Future work includes online calibration robustness, broader real-world validation, and tighter integration of geometry-aware tokens with the action pathway and 3D action representations.
+Our method assumes accurate camera intrinsics and extrinsics, making it sensitive to calibration drift, synchronization errors, and train-test calibration mismatch. The module also relies on a visual geometry teacher to provide dense ray and log-depth targets during training. Teacher confidence gating reduces the influence of unreliable predictions, but it does not eliminate all teacher bias, especially under occlusion, specularities, blur, or views where the geometry model has weak priors.
+
+The current approach improves the visual-token representation without changing the action representation or the action-learning objective. This keeps the method compatible with pretrained VLAs, but it also means that failures caused by action-space limitations, insufficient demonstrations, or poor language-action grounding may remain. Finally, full-resolution teacher caches and auxiliary-head training add offline preprocessing and training cost, even though the teacher is not required at deployment. Future work should study online calibration robustness, broader real-world validation, and tighter integration between geometry-aware tokens and 3D action representations.
 
 \section{Conclusion}
 \label{sec:conclusion}
-We presented G$^3$VLA, a camera-aware interface that injects calibrated structure into the visual-token stream of pretrained VLA policies via intrinsic-conditioned ray embeddings, PRoPE-based pose injection, bidirectional cross-view fusion, and dense point-map distillation, without changing the policy interface, action space, or imitation objective. Across LIBERO, RoboCasa24, and RoboTwin2.0, it improves the most on spatially and object-sensitive tasks, with ground-truth supervision the strongest signal and $\pi^3$X distillation a practical alternative when depth is unavailable. The results in $\pi_{0.5}$ and GR00T~1.5 further suggest that geometric transfer is most effective when geometry-aware tokens reach the action pathway directly. Overall, calibrated camera geometry is a lightweight and useful inductive bias for spatial precision in generalist VLA policies.
+
+We presented G$^3$VLA, a camera-aware geometric interface that injects calibrated camera structure
+into the visual-token stream of pretrained vision-language-action policies. By combining
+intrinsic-conditioned ray embeddings, PRoPE-based pose injection, bidirectional cross-view fusion,
+and dense point-map distillation, G$^3$VLA exposes camera-local rays and cross-view geometry to
+the action model without changing the policy interface, action space, or imitation objective.
+Across LIBERO, RoboCasa24, and RoboTwin2.0, the method improves most consistently on
+spatially and object-sensitive manipulation tasks, with ground-truth point-map supervision providing
+the strongest signal and $\pi^3$X distillation offering a practical alternative when depth supervision
+is unavailable. Results on $\pi_{0.5}$ and GR00T 1.5 further suggest that geometric transfer is most
+effective when geometry-aware visual tokens have direct access to the action generation pathway.
+Overall, our findings indicate that calibrated camera geometry is a useful and lightweight inductive
+bias for improving spatial precision in generalist VLA policies.
 
 %===============================================================================
 

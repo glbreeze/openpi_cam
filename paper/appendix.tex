@@ -1,0 +1,290 @@
+\section{Implementation Details}
+\label{app:implementation}
+
+The main experiments instantiate G$^3$VLA on top of $\pi_0$ without changing the policy action space, action horizon, language conditioning, or flow-matching objective. All geometric information is introduced through the visual-token stream before the VLA projection layer.
+
+\paragraph{Visual-token processing.}
+All reported $\pi_0$ experiments use $224\times224$ input images. With the SigLIP patch size used by the backbone, this produces a $16\times16$ grid of visual patch tokens for each camera view. For each calibrated camera, we compute a dense image of normalized rays by applying the inverse intrinsic matrix to homogeneous pixel coordinates. The first two coordinates of this ray are embedded with a zero-initialized patch embedding and added to the usual image patch embedding before the SigLIP transformer layers. Thus the vision encoder receives intrinsic-aware patch tokens from its first layer, while the zero initialization preserves the pretrained visual behavior at the start of finetuning. We do not add learned camera-ID embeddings in the main model; camera identity is expressed through calibration. We also avoid geometric image augmentations that would make the RGB image inconsistent with its intrinsics or extrinsics.
+
+After the vision encoder, patch tokens retain their view grouping. The cross-view module first applies frame attention independently within each camera stream, preserving view-local spatial structure. It then applies one global cross-view attention layer over the flattened set of valid view tokens, allowing information to flow bidirectionally between cameras. PRoPE is implemented as a dedicated pose-injection attention block inserted immediately after this global cross-view attention layer. Within that block, camera-to-world poses are converted to world-to-camera view matrices, and the intrinsics, view matrices, and patch locations define the projective transforms applied to Q/K/V. The resulting pose-conditioned attention output is added as a residual to the fused visual tokens. Invalid or padded camera views are masked throughout cross-view attention and pose injection.
+
+\paragraph{Auxiliary point head.}
+The auxiliary point head is a training-time decoder attached to the post-fusion, pre-projector visual tokens. It consumes the $16\times16$ patch-token grid produced by the vision backbone, but the full-resolution recipe does not compute the loss at patch resolution. Instead, it upsamples this token grid and predicts dense $224\times224$ point-map targets.
+
+Concretely, the head keeps the per-view token grouping and reshapes each view's 256 patch tokens back to a $16\times16$ two-dimensional grid. It first maps the visual-token dimension to a hidden width of 512 and applies two transformer blocks with 8 attention heads, 2D rotary position embeddings, QK normalization, MLP ratio 4, and LayerScale initialized to 0.01. The resulting $16\times16$ feature grid is decoded with three transposed-convolution stages with channel widths 256, 128, and 64, followed by bilinear interpolation to $224\times224$. Two lightweight zero-initialized output heads predict the ray-coordinate map and the log-$z$ map at the teacher resolution.
+
+\section{Camera Geometry and Preprocessing}
+\label{app:camera_geometry}
+
+Camera intrinsics and extrinsics are treated as fixed inputs rather than learned parameters. Intrinsics enter the model through two pathways: they define the ray embeddings before the vision encoder, and they are used again inside the PRoPE pose-injection block. Extrinsics enter the PRoPE block as camera poses in a shared scene or robot frame.
+
+For LIBERO simulation data, camera poses are converted to an OpenCV-style camera frame before they are used by the policy. The conversion preserves the camera center and flips the camera-frame $y$ and $z$ axes so that the resulting frame follows the convention $(x\text{-right},y\text{-down},z\text{-forward})$. This is the same camera-frame convention used by the ray embedding and the point-map targets. LIBERO RGB frames are stored and evaluated in the same rotated image convention used by the training pipeline. We apply the corresponding image-space transformation to the intrinsic matrix
+before computing rays, so the calibrated rays remain consistent with the image seen by the vision
+encoder. The teacher cache is generated after the same image conversion, so cached point maps and
+policy inputs are spatially aligned during training.
+
+Datasets with fewer physical cameras than the model's camera slots use padded views. These padded views are carried through the model with invalid-view masks and are excluded from cross-view attention, PRoPE pose injection, and the auxiliary geometry loss. For LIBERO, the geometry teacher supervises the base and wrist camera streams; any padded camera slot has no teacher target and does not contribute to the distillation objective.
+
+\section{Geometry Teacher and Point-Map Supervision}
+\label{app:pointmap_supervision}
+
+The geometry teacher provides one precomputed full-resolution point-map target per supervised camera view and frame. Each target consists of three dense maps at $224\times224$ resolution: a two-channel ray-coordinate map, a one-channel log-$z$ map, and a one-channel confidence-logit map. The ray-coordinate map represents the image-plane direction in the source camera frame. The log-$z$ map stores $d_u^v=\log z_u^v$, where $z_u^v$ is depth along the optical $z$-axis of camera $v$ in that camera's local coordinate frame. Together, the ray coordinate and log-$z$ value parameterize a local camera-frame point. For $\pi^3$X supervision, we use the teacher's raw local log-depth scale rather than treating the output as a reconstructed global metric point. When simulator depth is available, ground-truth point-map supervision uses the same camera-frame target schema.
+
+\paragraph{Teacher target generation.}
+For the main $\pi^3$X-supervised LIBERO recipe, teacher targets are generated offline from the converted LeRobot episodes. For each supervised camera stream, the stored RGB frames are resized to $224\times224$, and the camera intrinsic matrix is scaled to the same resolution. Each frame is then passed independently through the $\pi^3$X encoder, decoder, point decoder, and convolutional point head. We cache the point head's raw two-channel ray coordinate and raw pre-exponential log-$z$ output, together with confidence logits produced by the $\pi^3$X confidence decoder and confidence head. The metric head is not added in the main four-suite target cache, so the cached log-$z$ target represents the teacher's local depth scale rather than a globally metric reconstruction. The cache is stored at the full $224\times224$ output resolution; the older patch-grid mode obtained by average-pooling $14\times14$ pixel blocks is not used by the main full-resolution experiments.
+
+The simulator ground-truth target variant follows the same file layout and target schema, but replaces the $\pi^3$X prediction with rendered depth. The depth image is rotated and resized to match the policy image convention, and the adjusted intrinsic matrix is used to compute $q_u^v=((u-c_x)/f_x,(v-c_y)/f_y)$ for every pixel. Valid depth values are converted to $d_u^v=\log z_u^v$ and assigned high confidence; invalid or missing depth values receive low confidence and are removed by the confidence gate in the loss. Thus the $\pi^3$X and simulator-depth variants differ only in the source of the point-map target, not in the auxiliary-head architecture or loss interface.
+
+The auxiliary head predicts maps at the same spatial resolution as the teacher. During training, predictions are matched only to supervised and valid camera views. Teacher confidence is used as a hard reliability gate:
+\begin{equation}
+    m_u^v = M^v \mathbf{1}\left[\sigma(c_u^v) > 0.1\right],
+\end{equation}
+where $M^v$ is the view-validity indicator and $c_u^v$ is the teacher confidence logit. The distillation objective is
+\begin{equation}
+    \mathcal{L}_{\mathrm{distill}} =
+    \frac{
+        \sum_{v,u}m_u^v
+        \left(
+        \frac{1}{2}\lVert \hat{q}_u^v-q_u^v\rVert_2^2
+        +(\hat{d}_u^v-d_u^v)^2
+        \right)
+    }{
+        \sum_{v,u}m_u^v+\epsilon
+    } .
+\end{equation}
+Thus confidence determines which pixels are trusted, but it does not softly reweight the regression residuals. The loss is evaluated at the full $224\times224$ teacher resolution. The auxiliary head and teacher targets are used only during training.
+
+\section{Training Hyperparameters}
+\label{app:training_details}
+
+We train the main $\pi_0$ model with a two-stage curriculum. Stage 1 emphasizes dense geometric supervision while preserving the pretrained action pathway: only the newly introduced ray embedding, cross-view fusion, PRoPE pose-injection block, and auxiliary point head are updated. Stage 2 starts from the final Stage 1 checkpoint, unfreezes the full policy, restores the action objective as the dominant loss, and keeps the distillation objective as a weaker regularizer.
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Stage} & \textbf{Steps} & $\lambda_{\mathrm{act}}$ & $\lambda_{\mathrm{distill}}$ & \textbf{Warmup / LR} \\
+\midrule
+Stage 1 & 5k & 0.1 & 1.0 & 500 steps; $2.5{\times}10^{-5}\rightarrow2.5{\times}10^{-6}$ \\
+Stage 2 & 30k & 1.0 & 0.05 & 1k steps; $2.5{\times}10^{-5}\rightarrow2.5{\times}10^{-6}$ \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Training schedule.} Both stages use cosine learning-rate decay. Stage 1 learns the new geometry pathway under strong point-map supervision; Stage 2 fine-tunes the complete policy with a smaller auxiliary regularizer.}
+\label{tab:appendix_training_schedule}
+\end{table}
+
+Both stages use AdamW with $\beta_1=0.9$, $\beta_2=0.95$, $\epsilon=10^{-8}$, negligible weight decay, and global gradient clipping at 1.0. Training uses a global batch size of 32 and bfloat16 precision.
+
+\section{Ablation Configuration}
+\label{app:ablation_configuration}
+
+All LIBERO ablations use the same four-suite dataset, image resolution, optimizer, action representation, and rollout protocol as the main model. Each variant changes one part of the geometric visual-token pathway.
+
+\textbf{Base $\pi_0$ policy.}
+The base comparison is the original $\pi_0$ policy finetuned on the same four-suite data with the standard action objective. It uses RGB observations, proprioception, and language in the original policy interface, without the calibrated visual-token module or dense point-map supervision.
+
+\textbf{No ray embedding.}
+This variant removes the intrinsic-conditioned ray signal before the vision backbone while leaving the later multi-view fusion pathway unchanged. It isolates the contribution of early ray conditioning at the visual patch level.
+
+\textbf{No PRoPE.}
+This variant removes the projective pose-conditioned attention used during cross-view fusion. It still receives intrinsic-aware visual tokens, so the comparison separates early ray conditioning from explicit cross-view reasoning with camera poses.
+
+\textbf{One-stage training.}
+This variant keeps the full architecture and teacher target, but removes the geometry-adaptation stage. The model is trained end-to-end from the pretrained policy initialization with the action loss as the dominant objective and point-map prediction as a weak auxiliary regularizer.
+
+\textbf{Supervision source.}
+The supervision-source ablation compares full-resolution point maps predicted by $\pi^3$X with point maps derived from simulator depth. Both are converted into the same ray-coordinate, log-$z$, and confidence format before training. We additionally use a scale-aligned $\pi^3$X diagnostic cache to isolate how much of the gap to simulator depth comes from depth-scale mismatch rather than from the rest of the teacher prediction.
+
+\section{Evaluation Details}
+\label{app:evaluation_details}
+\subsection{Simulation Evaluation Protocol} 
+\label{app:simulation_protocol}
+All reported simulator benchmark results are averaged over three independent evaluation runs.
+For each run, success rates are first computed using the benchmark-specific rollout protocol, and
+the final reported number is the arithmetic mean over the three runs.
+\paragraph{LIBERO.}
+We evaluate on the four standard LIBERO suites: Spatial, Object, Goal, and LIBERO-10. Each suite is evaluated with 50 rollouts per task from the official LIBERO initial states. The environment seed is fixed to 7, and each rollout begins with 10 dummy actions to let objects settle. The maximum episode lengths are 220 steps for Spatial, 280 for Object, 300 for Goal, and 520 for LIBERO-10, matching the evaluation script.
+
+At each policy query, the simulator renders the base and wrist cameras at $256\times256$. The images are rotated into the training convention and resized to $224\times224$ before being sent to the policy. The observation sent to the policy server contains the two RGB views, proprioceptive state, task language, and the current camera intrinsics and extrinsics. The policy predicts an action chunk, and evaluation executes the first five actions before querying the policy again. A rollout is counted as successful when the LIBERO environment returns task completion. Suite success rate is the total number of successful rollouts divided by the total number of attempted rollouts in that suite. For the four-suite LIBERO summary, we report the average over the four suite-level success rates.
+
+For efficiency, each suite is evaluated by one policy server and multiple rollout clients. The clients shard the suite's task IDs, write per-shard JSON summaries, and the final aggregate success rate is computed by summing successes and attempted episodes across shards.
+
+\paragraph{RoboCasa24 and RoboTwin2.0.}
+For the additional simulator experiments, we use the same remote-policy evaluation pattern: a policy server receives calibrated observations and returns action chunks, while the simulator wrapper records binary task success. RoboCasa-style evaluation executes chunks of 50 actions for up to 500 environment steps and reports the mean success over completed episodes. RoboTwin evaluation follows the task wrapper's accepted-seed protocol: candidate seeds are filtered by the expert policy, the learned policy is evaluated only on accepted seeds, and success is determined by the task environment's success predicate.
+
+Table~\ref{tab:appendix_robocasa_breakdown} expands the aggregate RoboCasa24 result reported in
+the main text. Following the RoboCasa24 reporting protocol, tasks are grouped into Pick \& Place,
+Doors / Drawers, and Others. Counts are aggregated over the same three independent evaluation
+runs used for the main simulator results.
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Method} & \textbf{Pick \& Place} & \textbf{Doors / Drawers} & \textbf{Others} & \textbf{Total Avg.} \\
+\midrule
+$\pi_0$ Baseline
+& 21/160 (13.1\%) & 64/120 (53.3\%) & 79/200 (39.5\%) & 164/480 (34.2\%) \\
+G$^3$VLA ($\pi^3$X)
+& 21/160 (13.1\%) & 63/120 (52.5\%) & \textbf{91/200 (45.5\%)} & 175/480 (36.5\%) \\
+G$^3$VLA (GT)
+& \textbf{29/160 (18.1\%)} & \textbf{65/120 (54.2\%)} & 84/200 (42.0\%) & \textbf{178/480 (37.1\%)} \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{RoboCasa24 task-family breakdown.}
+Success counts and rates are reported for Pick \& Place, Doors / Drawers, and Others. The total
+average corresponds to the aggregate RoboCasa24 result reported in the main text.}
+\label{tab:appendix_robocasa_breakdown}
+\end{table}
+
+\subsection{Real-World Evaluation Protocol} \label{app:real_world_protocol}
+
+\textbf{Pick-and-Place Test Tube.} 
+% In the test tube task, the large tube holder is treated as the source holder \(A\), and the small tube holder is treated as the target holder \(B\). The source holder \(A\) can be placed at two predefined tabletop locations, \(A1\) and \(A2\), while the target holder \(B\) can be placed at predefined tabletop locations, including \(B1\) and \(B3\). These tabletop locations are marked in the evaluation setup.
+% We evaluate two source-target holder configurations: \(A1\)-\(B1\) and \(A2\)-\(B3\). For each configuration, the test tube is initialized in two different slots of the source holder, namely source slot 1 and source slot 3. The robot is allowed to place the tube into any valid slot of the target holder. Therefore, each camera viewpoint contains four evaluation trials in total. We repeat the same evaluation protocol for each model checkpoint, including 20K, 25K, and 30K training steps.
+% Each trial is labeled as \(0\), \(1^*\), or \(1\). A score of \(0\) indicates that the robot fails to grasp the tube from the source holder. A score of \(1^*\) indicates that the robot successfully grasps the tube but fails to place it into a valid slot of the target holder. A score of \(1\) indicates that the robot successfully grasps the tube and places it into a valid target slot. In the reported success rate, both \(1\) and \(1^*\) are counted as successful outcomes, while \(0\) is counted as a failure. The final success rate is computed as the percentage of successful trials over all evaluation trials.
+% Short version
+The task uses two holders (source $A$, target $B$) placed at predefined locations (e.g., $A1/A2$, $B1/B3$) (see Fig.~\ref{fig:real-robo}). We evaluate two source-target holder configurations: \(A1\)-\(B1\) and \(A2\)-\(B3\). For each configuration, the test tube is initialized in two different slots of the source holder, namely slot 1 and slot 3. Thus, each camera viewpoint contains four evaluation trials in total. Success is binary but allows partial credit: $1^*$ (grasp success, placement failure), $1$ success, and $0$ failure. Success rate is the fraction of successful trials.
+
+\textbf{Pouring Nut.}
+% The pouring nut task is a long-horizon manipulation task consisting of two sequential stages. In the first stage, the robot must pick up the wheel-shaped container and stack it on top of the red-marked base wheel. In the second stage, the robot must grasp the blue nut container and pour its contents, including the nuts and metal pieces, into the stacked wheel container. After completing the pouring motion, the robot places the blue container back down at a nearby location on the tabletop; this final placement does not need to match any predefined location.
+% In the evaluation setup, the blue nut container is denoted as \(A\), and it is initialized at one of two predefined tabletop locations, \(A1\) or \(A2\). The red-marked base wheel is fixed at location \(B5\). The wheel-shaped container that must be stacked on top of the red-marked base is initialized at either location \(B2\) or \(B6\). Therefore, each camera viewpoint contains four evaluation trials in total, corresponding to the combinations \(B2\)-\(B5\) with \(A1\) or \(A2\), and \(B6\)-\(B5\) with \(A1\) or \(A2\). We repeat the same evaluation protocol for each model checkpoint, including 20K, 25K, and 30K training steps.
+% Each trial is assigned one of four scores: \(0\), \(0.5\), \(1^*\), or \(1\). A score of \(0\) indicates that the robot fails during the initial stacking stage. A score of \(0.5\) indicates that the robot successfully completes the stacking stage but fails to properly grasp the blue nut container, either by moving to an incorrect grasp position or by grasping the wrong side of the container such that it cannot pour the contents. A score of \(1^*\) indicates that the robot completes the stacking and pouring stages, but some nuts are dropped outside the wheel container during pouring. A score of \(1\) indicates that the robot successfully stacks the wheel-shaped container, grasps the blue nut container, pours the contents into the wheel container, and places the blue container back down on the tabletop.
+% The final success score is computed by averaging the trial scores over all evaluation trials, where \(0.5\) contributes as a half point, and both \(1^*\) and \(1\) contribute as one point. The reported success rate is the averaged score expressed as a percentage.
+This is a long-horizon task consisting of stacking a wheel-shaped container on on top of the red-marked base wheel and followed by pouring nuts and metal pieces into it. Four configurations are formed from two locations of the nut container ($A1/A2$) and two locations of the wheel-shaped container ($B2/B6$), with a fixed red-marked base wheel at $B5$, yielding four evaluation trials per viewpoint. Each trial is scored as $0$, $0.5$, $1^*$, or $1$, reflecting increasing task completion levels. $0.5$ indicates that the robot successfully completes the stacking stage but fails to complete the pouring stage; while $1^*$ indicates that the robot completes the stacking and pouring stages, but some nuts are dropped outside the container. The final score averages these values.
+
+
+\subsection{Evaluation Stability Across Independent Runs}
+\label{app:evaluation_stability}
+
+To assess evaluation stability, we report the variability of the main $\pi$-series experiments over three independent evaluation runs. 
+This analysis excludes the diagnostic ablations, which are intended to isolate architectural components rather than estimate run-to-run variance. 
+For each method and benchmark, we report mean $\pm$ standard deviation over the three evaluation runs. 
+For LIBERO, the average row is computed by first taking the macro-average over the four suites within each run and then computing the standard deviation across runs.
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{lccc}
+\toprule
+Suite & $\pi_0$ Baseline & G$^3$VLA ($\pi^3$X) & G$^3$VLA (GT) \\
+\midrule
+Goal    & $87.4{\scriptstyle \pm 0.5}$ & $88.4{\scriptstyle \pm 0.6}$ & $88.4{\scriptstyle \pm 0.4}$ \\
+Spatial & $85.2{\scriptstyle \pm 0.7}$ & $88.6{\scriptstyle \pm 0.6}$ & $89.2{\scriptstyle \pm 0.5}$ \\
+Object  & $89.4{\scriptstyle \pm 0.5}$ & $93.4{\scriptstyle \pm 0.5}$ & $94.4{\scriptstyle \pm 0.4}$ \\
+L-10    & $76.5{\scriptstyle \pm 0.9}$ & $77.6{\scriptstyle \pm 0.8}$ & $80.4{\scriptstyle \pm 0.7}$ \\
+\midrule
+Average & $84.6{\scriptstyle \pm 0.4}$ & $87.0{\scriptstyle \pm 0.4}$ & $88.1{\scriptstyle \pm 0.3}$ \\
+\bottomrule
+\end{tabular}
+\caption{Three-run variability on LIBERO with $\pi_0$ backbone. Values are success rates (\%) reported as mean $\pm$ standard deviation over three independent evaluation runs.}
+\label{tab:libero_pi0_three_run}
+\end{table}
+
+\begin{table}[H]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llc}
+\toprule
+Benchmark & Method & Success \\
+\midrule
+\multirow{3}{*}{RoboCasa24}
+& $\pi_0$ Baseline & $34.2{\scriptstyle \pm 0.9}$ \\
+& G$^3$VLA ($\pi^3$X) & $36.5{\scriptstyle \pm 1.1}$ \\
+& G$^3$VLA (GT) & $37.1{\scriptstyle \pm 1.0}$ \\
+\midrule
+\multirow{3}{*}{RoboTwin2.0}
+& $\pi_0$ Baseline & $44.0{\scriptstyle \pm 2.0}$ \\
+& G$^3$VLA ($\pi^3$X) & $41.0{\scriptstyle \pm 1.7}$ \\
+& G$^3$VLA (GT) & $49.0{\scriptstyle \pm 2.5}$ \\
+\bottomrule
+\end{tabular}
+\caption{Three-run variability on broader $\pi_0$ simulation benchmarks. RoboCasa24 reports the total average success rate; RoboTwin2.0 reports the handover-block diagnostic. Values are success rates (\%).}
+\label{tab:broader_pi0_three_run}
+\end{table}
+
+\subsection{Teacher-Target Failure Case on RoboTwin2.0} 
+\todo{visualization of how pi3x failed on RoboTwin}
+\label{app:robotwin_teacher_failure} RoboTwin2.0 provides a useful stress test for the supervision source used by G$^3$VLA. Unlike LIBERO and RoboCasa24, the handover-block diagnostic is a clean synthetic bimanual scene with simplified visual structure, sparse texture, and more than two camera views. This setting is useful for testing multi-view geometric integration, but it can also expose a domain mismatch in the offline geometry teacher. The $\pi^3$X-supervised variant depends on cached dense point-map targets predicted from RGB observations. In highly clean synthetic scenes, we observe that these teacher targets can become unreliable: textureless regions, simplified object appearances, robot links, and object boundaries may receive geometrically inconsistent ray or log-depth predictions. Because the confidence gate is a hard threshold, it removes low-confidence pixels but does not eliminate high-confidence incorrect predictions. As a result, the auxiliary geometry loss can regularize the visual-token pathway toward inaccurate point-map targets. The RoboTwin2.0 result is consistent with this interpretation. G$^3$VLA ($\pi^3$X) decreases the handover-block success rate from 44.0\% to 41.0\%, while G$^3$VLA (GT) improves it to 49.0\%. Both variants use the same camera-aware interface; the main difference is the source of dense geometric supervision. We therefore interpret the $\pi^3$X drop as a teacher-target failure under clean synthetic visual distributions, not as evidence against calibrated camera geometry. When reliable simulator point maps are available, the same geometric interface remains beneficial.
+
+
+
+\section{Qualitative Examples \& Failure Cases}
+\label{app:qualitative_example}
+\textbf{Recovery Behavior in Real Robot Experiments.}
+The GT-based variants, including G$^3$VLA with \(\pi_0\)+GT and \(\pi_{0.5}\)+GT, show robust recovery behavior during the long-horizon pouring nut task. During stacking, if the wheel-shaped container is slightly misaligned on the red-marked base, the robot often re-grasps the container and adjusts its pose before continuing (Figure~\ref{fig:alignment-recovery}). During pouring, if the first grasp of the blue container fails or the container slips, the robot can attempt to re-grasp it multiple times within the same rollout (Figure~\ref{fig:regrasp-recovery}).
+ 
+This recovery behavior is also observed under OOD camera viewpoints. The robot may initially move toward an incorrect grasp position where the blue container is not visible in the wrist camera, but it can recover by repositioning, using the context camera, or moving upward until the container appears in the wrist-camera view. It then moves toward the visible container and attempts the grasp again (Figure~\ref{fig:ood-location-recovery}). In contrast, these recovery behaviors were not observed in the vanilla models. These observations suggest that GT-based geometry supervision improves robustness by enabling corrective actions after intermediate errors.
+
+\textbf{Failure Cases.}
+Across both tasks, we observe a common failure mode for all models where the robot moves toward an incorrect predefined object location (Figure~\ref{fig:location-overfit-failure}). In the test tube task, the robot sometimes overfits to source slot 3 and moves there even when the tube is placed at slot 1, for both ID and OOD camera viewpoints. In the pouring nut task, a similar location-overfitting failure occurs mainly under OOD viewpoints, where the robot moves toward the wrong predefined location to grasp the blue container. We also observe failures caused by unstable or incorrect grasp poses, where the object slips or is grasped from an unsuitable side (Figure~\ref{fig:wrong-side-grasp-failure}).
+
+Since these failures appear in both vanilla baselines and model variants, they likely reflect general VLA failure modes rather than issues specific to our method. However, as described above, the GT-based variants can often recover from these failures through corrective behavior.
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=.9\linewidth]{imgs/failure_recovery/realign.png}
+    \caption{
+    Alignment correction during the pouring nut task. 
+    (a) The wheel-shaped container is initially placed on the red-marked base with slight misalignment. 
+    (b) The GT-based model corrects the placement by re-grasping and adjusting the container to achieve better alignment before continuing to the pouring stage.
+    }
+    \label{fig:alignment-recovery}
+    \vspace{-.3cm}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=.99\linewidth]{imgs/failure_recovery/regrasp.png}
+    \caption{
+    Re-grasping behavior during the pouring nut task. 
+    (a) The robot fails to grasp the blue container on the first attempt. 
+    (b) The robot opens the gripper and repositions for another grasp attempt. 
+    (c) The robot successfully re-grasps the blue container and continues the task.
+    }
+    \label{fig:regrasp-recovery}
+    \vspace{-.3cm}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=.99\linewidth]{imgs/failure_recovery/recovery.png}
+    \caption{
+    Recovery from location-overfitting under an OOD camera viewpoint. 
+    (a) The robot initially moves toward an overfitted grasp location instead of the blue container. 
+    (b) During recovery, the robot repositions and searches for the blue container. 
+    (c) Once the blue container appears in view, the robot moves toward the correct position and successfully grasps it.
+    }
+    \label{fig:ood-location-recovery}
+    \vspace{-.3cm}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=.99\linewidth]{imgs/failure_recovery/overfit-pos.png}
+    \caption{
+    Location-overfitting failure cases across the two tasks.
+    (a) In the test tube task, the robot often moves toward source slot 3 even when the tube is initialized at a different predefined slot.
+    (b) In the pouring nut task, especially under OOD camera viewpoints, the robot can move toward the predefined \(A1\) location when attempting to grasp the blue container, even when the container is placed at \(A2\).
+    }
+    \label{fig:location-overfit-failure}
+    \vspace{-.3cm}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=.99\linewidth]{imgs/failure_recovery/grasp_wrong_side.png}
+    \caption{
+    Incorrect grasp-side failure in the pouring nut task.
+    (a) The robot grasps the blue container from a suitable side, enabling it to lift and pour the contents.
+    (b) The robot grasps the blue container from the wrong side, which prevents a successful pouring motion.
+    }
+    \label{fig:wrong-side-grasp-failure}
+    \vspace{-.3cm}
+\end{figure}
