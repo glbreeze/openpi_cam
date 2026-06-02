@@ -1,0 +1,53 @@
+{
+  "episode": 24,
+  "frame": 227,
+  "selection": {
+    "episode": 24.0,
+    "frame": 227.0,
+    "mean_abs_log_median_depth_ratio": 3.5607096354166665,
+    "max_abs_log_median_depth_ratio": 4.8857421875,
+    "mean_si_mae": 0.166297064444101,
+    "max_si_mae": 0.2807223473589759,
+    "min_corr": 0.8405699729919434
+  },
+  "selected_view_rows": [
+    {
+      "episode": 24,
+      "frame": 227,
+      "view": "agent",
+      "si_mae": 0.2807223473589759,
+      "corr": 0.8405699729919434,
+      "median_depth_ratio": 21.380943298339844,
+      "abs_log_median_depth_ratio": 3.0625,
+      "pi3x_median_m": 13.288700103759766,
+      "gt_median_m": 0.6215207576751709
+    },
+    {
+      "episode": 24,
+      "frame": 227,
+      "view": "right_wrist",
+      "si_mae": 0.14098366164805448,
+      "corr": 0.9838361144065857,
+      "median_depth_ratio": 132.38870239257812,
+      "abs_log_median_depth_ratio": 4.8857421875,
+      "pi3x_median_m": 3.5349366664886475,
+      "gt_median_m": 0.026701197028160095
+    },
+    {
+      "episode": 24,
+      "frame": 227,
+      "view": "wrist",
+      "si_mae": 0.07718518432527266,
+      "corr": 0.9411778450012207,
+      "median_depth_ratio": 15.392596244812012,
+      "abs_log_median_depth_ratio": 2.73388671875,
+      "pi3x_median_m": 9.177885055541992,
+      "gt_median_m": 0.5962532162666321
+    }
+  ],
+  "figure": "paper_assets/robotwin_handover_pi3x_appendix/handover_block_pi3x_gt_worst_ep000024_frame0227.png",
+  "histogram": "paper_assets/robotwin_handover_pi3x_appendix/handover_block_pi3x_gt_error_histogram.png",
+  "num_frame_view_pairs": 42261,
+  "episodes_scanned": 50,
+  "spatial_stride": 4
+}

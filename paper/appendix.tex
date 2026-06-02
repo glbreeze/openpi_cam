@@ -209,10 +209,9 @@ Benchmark & Method & Success \\
 \label{tab:broader_pi0_three_run}
 \end{table}
 
-\subsection{Teacher-Target Failure Case on RoboTwin2.0} 
-\todo{visualization of how pi3x failed on RoboTwin}
-\label{app:robotwin_teacher_failure} RoboTwin2.0 provides a useful stress test for the supervision source used by G$^3$VLA. Unlike LIBERO and RoboCasa24, the handover-block diagnostic is a clean synthetic bimanual scene with simplified visual structure, sparse texture, and more than two camera views. This setting is useful for testing multi-view geometric integration, but it can also expose a domain mismatch in the offline geometry teacher. The $\pi^3$X-supervised variant depends on cached dense point-map targets predicted from RGB observations. In highly clean synthetic scenes, we observe that these teacher targets can become unreliable: textureless regions, simplified object appearances, robot links, and object boundaries may receive geometrically inconsistent ray or log-depth predictions. Because the confidence gate is a hard threshold, it removes low-confidence pixels but does not eliminate high-confidence incorrect predictions. As a result, the auxiliary geometry loss can regularize the visual-token pathway toward inaccurate point-map targets. The RoboTwin2.0 result is consistent with this interpretation. G$^3$VLA ($\pi^3$X) decreases the handover-block success rate from 44.0\% to 41.0\%, while G$^3$VLA (GT) improves it to 49.0\%. Both variants use the same camera-aware interface; the main difference is the source of dense geometric supervision. We therefore interpret the $\pi^3$X drop as a teacher-target failure under clean synthetic visual distributions, not as evidence against calibrated camera geometry. When reliable simulator point maps are available, the same geometric interface remains beneficial.
-
+\subsection{Teacher-Target Failure Case on RoboTwin2.0}
+\label{app:robotwin_teacher_failure}
+\input{paper_assets/robotwin_handover_pi3x_appendix/appendix_robotwin_pi3x_failure_case}
 
 
 \section{Qualitative Examples \& Failure Cases}
