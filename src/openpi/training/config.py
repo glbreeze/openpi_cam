@@ -324,8 +324,8 @@ class LeRobotRobocasaCamDataConfig(DataConfigFactory):
     Mirrors `LeRobotLiberoDataConfig` — same Pi3X / GT-mix point-target
     plumbing, same `include_cam_extrinsics` switch — but maps RoboCasa cameras
     into the model's agent / wrist / right_wrist slots via `RobocasaCamInputs`.
-    RoboCasa365 uses all three cameras; RoboCasa v0 human50 uses two cameras
-    and pads right_wrist when `include_right_agentview=False`.
+    RoboCasa v0 human50 uses two cameras and pads right_wrist when
+    `include_right_agentview=False`.
 
     Repack maps the upstream LeRobot converter's keys:
         observation.images.robot0_<cam>        -> observation/<cam>
@@ -2789,142 +2789,6 @@ _CONFIGS = [
         overwrite=True,
         exp_name="debug_pi05",
         wandb_enabled=False,
-    ),
-    #
-    # RoboCasa365 (PandaOmron, single-arm Franka + mobile base) — cam-aware Pi3X
-    # distillation recipes. Action layout (12-d):
-    #     [base_motion(4), control_mode(1), eef_pos(3), eef_rot(3), gripper(1)]
-    # For the first atomic PnP/OpenDrawer sweep we leave use_delta_joint_actions
-    # at the default (False) so the model predicts the absolute eef target
-    # already stored in the LeRobot row. Flip to True once we confirm the
-    # absolute-target path trains.
-    #
-    # Stage 1: train only new geometry / distillation modules; warm-start
-    # ray_embed from the Pi3X-init weights; 5k steps.
-    TrainConfig(
-        name="pi0_robocasa365_cam_prope_ray_view_distill_fullres_stage1",
-        model=pi0_config.Pi0Config(
-            pose_enc_type="prope",
-            ray_enc_type=True,
-            view_enc_type=False,
-            cross_view=cross_view_config.CrossViewFusionConfig(
-                type="standard",
-                aa_order="fg",
-                prope_layer_idx=(0,),
-            ),
-            disable_geometric_augs=True,
-            action_loss_weight=0.1,
-            aux_point_head=point_head_config.AuxPointHeadConfig(
-                enabled=True,
-                loss_weight=1.0,
-                output_resolution=224,
-            ),
-            ray_embed_pi3x_init_path=str(
-                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
-            ),
-            ray_embed_pi3x_init_scale=1.0,
-        ),
-        data=LeRobotRobocasaCamDataConfig(
-            repo_id="robocasa365/OpenDrawer_target_human_camaware",
-            assets=AssetsConfig(
-                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
-                asset_id="robocasa365/OpenDrawer_target_human_camaware",
-            ),
-            base_config=DataConfig(prompt_from_task=True),
-            include_cam_extrinsics=True,
-            pi3x_targets_root=str(
-                pathlib.Path(
-                    "~/.cache/openpi/pi3x_targets_224/robocasa365_OpenDrawer_target_human_camaware"
-                ).expanduser()
-            ),
-        ),
-        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
-        num_train_steps=5_000,
-        batch_size=8,
-        lr_schedule=_optimizer.CosineDecaySchedule(
-            warmup_steps=500,
-            peak_lr=2.5e-5,
-            decay_steps=5_000,
-            decay_lr=2.5e-6,
-        ),
-        trainable_prefixes=(
-            "cross_view_fusion",
-            "ray_embed",
-            "aux_point_head",
-        ),
-    ),
-    # Stage 2: unfreeze full policy; restore action_loss_weight=1.0; keep aux
-    # geometry loss as a weak regularizer at 0.05; 30k steps; warm-start from
-    # stage1 final checkpoint via --pytorch_weight_path on the launcher.
-    TrainConfig(
-        name="pi0_robocasa365_cam_prope_ray_view_distill_fullres_stage2",
-        model=pi0_config.Pi0Config(
-            pose_enc_type="prope",
-            ray_enc_type=True,
-            view_enc_type=False,
-            cross_view=cross_view_config.CrossViewFusionConfig(
-                type="standard",
-                aa_order="fg",
-                prope_layer_idx=(0,),
-            ),
-            disable_geometric_augs=True,
-            action_loss_weight=1.0,
-            aux_point_head=point_head_config.AuxPointHeadConfig(
-                enabled=True,
-                loss_weight=0.05,
-                output_resolution=224,
-            ),
-            ray_embed_pi3x_init_path=str(
-                pathlib.Path(__file__).resolve().parents[3] / "assets" / "pi3x_init" / "ray_embed.pt"
-            ),
-            ray_embed_pi3x_init_scale=1.0,
-        ),
-        data=LeRobotRobocasaCamDataConfig(
-            repo_id="robocasa365/OpenDrawer_target_human_camaware",
-            assets=AssetsConfig(
-                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
-                asset_id="robocasa365/OpenDrawer_target_human_camaware",
-            ),
-            base_config=DataConfig(prompt_from_task=True),
-            include_cam_extrinsics=True,
-            pi3x_targets_root=str(
-                pathlib.Path(
-                    "~/.cache/openpi/pi3x_targets_224/robocasa365_OpenDrawer_target_human_camaware"
-                ).expanduser()
-            ),
-        ),
-        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
-        num_train_steps=30_000,
-        batch_size=8,
-    ),
-    # A/B baseline: pose_enc=null, ray_enc off, no cross-view fusion, no point
-    # head, no extrinsics. Same action schedule as stage 2. Used for the
-    # apples-to-apples Pi0 vs Pi0+cam-aware comparison.
-    TrainConfig(
-        name="pi0_robocasa365_baseline",
-        model=pi0_config.Pi0Config(
-            pose_enc_type="null",
-            ray_enc_type=False,
-            view_enc_type=False,
-            cross_view=cross_view_config.CrossViewFusionConfig(type="none"),
-            disable_geometric_augs=True,
-            action_loss_weight=1.0,
-            aux_point_head=point_head_config.AuxPointHeadConfig(enabled=False),
-            ray_embed_pi3x_init_path=None,
-            ray_embed_pi3x_init_scale=1.0,
-        ),
-        data=LeRobotRobocasaCamDataConfig(
-            repo_id="robocasa365/OpenDrawer_target_human_camaware",
-            assets=AssetsConfig(
-                assets_dir=str(LOCAL_GEO_ROOT / "pi0_libero"),
-                asset_id="robocasa365/OpenDrawer_target_human_camaware",
-            ),
-            base_config=DataConfig(prompt_from_task=True),
-            include_cam_extrinsics=False,
-        ),
-        pytorch_weight_path=str(LOCAL_GEO_ROOT / "pi0_base"),
-        num_train_steps=30_000,
-        batch_size=8,
     ),
     #
     # RoboCasa v0 / human50 24-task bundle, using the same full-resolution

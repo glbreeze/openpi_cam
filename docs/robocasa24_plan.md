@@ -1,10 +1,8 @@
 # RoboCasa v0 (24-Task, 2024) Evaluation Plan
 
-Companion to [`robocasa_eval_debug_and_v0_migration.md`](robocasa_eval_debug_and_v0_migration.md)
-(the *why*) and [`robocasa365_checklist.md`](robocasa365_checklist.md) (the
-365 pipeline this borrows from). This doc is the concrete *how-to* for
-bringing up RoboCasa v0 — the older 24-task benchmark — from scratch on the
-local workstation first, then mirroring to the Torch HPC for the full sweep.
+The concrete *how-to* for bringing up RoboCasa v0 — the older 24-task
+benchmark — from scratch on the local workstation first, then mirroring to the
+Torch HPC for the full sweep.
 
 Scope baked into this plan:
 
@@ -588,12 +586,7 @@ Avoid:
 
 ## 10. Related docs
 
-- [`robocasa_eval_debug_and_v0_migration.md`](robocasa_eval_debug_and_v0_migration.md)
-  — rationale, failure analysis, v0 migration plan that this doc
-  operationalizes.
-- [`robocasa365_checklist.md`](robocasa365_checklist.md) — the 365 pipeline
-  this borrows install steps and the cam-aware enrichment pattern from.
-- [`robocasa365_hpc_runbook.md`](robocasa365_hpc_runbook.md) — verbose HPC
-  reference; the 24-task SLURM scripts should clone the 365 ones.
+- [`pi3x_pi0_system_architecture_and_results.md`](pi3x_pi0_system_architecture_and_results.md)
+  — camera-aware Pi3X architecture overview.
 - `scripts/env/activate_env.sh` — defines `GEO_ROOT` / `HF_LEROBOT_HOME`
   conventions used here.
